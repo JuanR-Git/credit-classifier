@@ -16,7 +16,7 @@ COLUMNS = {
         "valid_range": (18, 122),
         "regex": r"\d+(?:\.0+)?",
         "cleaning": "Ensure numeric, no extra characters.",
-        "notes": "Reject if outside human age range."
+        "notes": "Reject if outside human age range, 18 (assuming youngest age to have a credit score) to 122 (oldest person alive is 122)."
     },
 
     "Num_Credit_Card": {
@@ -40,12 +40,12 @@ COLUMNS = {
         "regex": None,
         "values": ["Scientist", "_______", "Teacher", "Engineer", "Entrepreneur", "Developer", "Lawyer", "Media_Manager", "Doctor", "Journalist", "Manager", "Accountant", "Musician", "Mechanic", "Writer", "Architect"], 
         "cleaning": "Bag-of-words classification. Normalize capitalization and whitespace.",
-        "notes": "Use ‘_______’ to mark ‘no other’. Assign numeric encoding after NLP preprocessing."
+        "notes": "Use ‘_______’ to mark ‘other’. Assign numeric encoding after NLP preprocessing."
     },
 
     "Annual_Income": {
         "type": "float",
-        "valid_range": (None, None),
+        "valid_range": (0, None),
         "regex": r"\d+(?:\.\d+)?",
         "cleaning": "Remove underscores and non-numeric symbols before conversion.",
         "notes": "Check if real number."
@@ -53,7 +53,7 @@ COLUMNS = {
 
     "Monthly_Inhand_Salary": {
         "type": "float",
-        "valid_range": (None, None),
+        "valid_range": (0, None),
         "regex": r"\d+(?:\.\d+)?",
         "cleaning": "Remove underscores and non-numeric characters.",
         "notes": "Tentative column—verify its interpretation."
@@ -88,7 +88,7 @@ COLUMNS = {
         "valid_range": (None, None),
         "regex": r"\d+(?:\.0+)?",
         "cleaning": "Raw numeric values only.",
-        "notes": "May include negatives if early payments are encoded as negative delays."
+        "notes": "May include negatives if early payments are encoded as negative delays. We'll have to analyse that after"
     },
 
     "Num_of_Delayed_Payment": {
@@ -125,7 +125,7 @@ COLUMNS = {
 
     "Outstanding_Debt": {
         "type": "float",
-        "valid_range": (None, None),
+        "valid_range": (0, None),
         "regex": r"\d+(?:\.\d+)?",
         "cleaning": "Ensure numeric, remove formatting symbols.",
         "notes": "Should be non-negative."
@@ -149,10 +149,10 @@ COLUMNS = {
 
     "Payment_of_Min_Amount": {
         "type": "str",
-        "valid_range": (None, None),
+        "valid_range": None,
         "values": ["No", "NM", "Yes"],
         "cleaning": "Ensure Yes, No, or NM (not much).",
-        "notes": "Collects Yes, No, or NM (not much) into a small bag of words."
+        "notes": "Collects Yes, No, or NM (not much) into a small bag of words / Binary one hot encoding."
     },
 
     "Total_EMI_per_month": {
@@ -165,7 +165,7 @@ COLUMNS = {
 
     "Amount_invested_monthly": {
         "type": "float",
-        "valid_range": (None, None),
+        "valid_range": (0, None),
         "regex": r"\d+(?:\.\d+)?",
         "cleaning": "Ensure numeric.",
         "notes": "Non-negative; financial variable."
@@ -195,6 +195,7 @@ COLUMNS = {
     }
 }
 
+# fire
 def validate_column_value(col_name, value):
     if col_name not in COLUMNS.keys():
         print("failed val bc of bad column:", col_name, value)
@@ -208,32 +209,42 @@ def validate_column_value(col_name, value):
         try:
             num = None
             match = re.findall(col_info["regex"], str(value).strip())
+
+            # check is the regex invoked
             if len(match):
                 num = float(match[0])
+
+            # empty match case
             else:
                 print("failed val regex:", col_name, value, col_info["regex"], str(value).strip())
                 return False
+
             if ((min_val is None or num >= min_val) and
                 (max_val is None or num <= max_val)):
                 # print("successful num val:", num)
                 return num  # return numeric value
+
+        # crash fixing
         except ValueError:
             pass
 
     # String type: return value if valid
     elif col_info.get("type") == "str":
         if col_info.get("values") and value in col_info["values"]:
-            # print("successful str val:", value)
             return col_info["values"].index(value)
 
     # List type: return list if all valid
     elif col_info.get("type") == "list":
-        if col_info.get("values"):
-            list_items = [item.strip() for item in str(value).split(',')]
-            if list_items:
-                list_items[-1] = list_items[-1].removeprefix("and ").strip()
-            if all(item in col_info["values"] for item in list_items):
-                return [col_info["values"].index(item) for item in list_items]  # return the index corresponding to item in col value
+        
+        # convert value into a list
+        list_items = [item.strip() for item in str(value).split(',')]
+
+        # if not empty
+        if list_items:
+            list_items[-1] = list_items[-1].removeprefix("and ").strip()
+
+        if all(item in col_info["values"] for item in list_items):
+            return [col_info["values"].index(item) for item in list_items]  # return the index corresponding to item in col value
             
     elif col_info.get("type") == "time":
         match = re.findall(col_info["regex"], str(value).strip())
@@ -243,6 +254,7 @@ def validate_column_value(col_name, value):
             total_years = years + months / 12.0
             if total_years >= 0:
                 return total_years
+    
     print("failed val all tests:", col_name, value)
     return False
 
@@ -258,13 +270,17 @@ def dataCreation(filePath: str):
     df = df.dropna()  # Filter out rows with NULL values
     return df
 
+# future improvement: make the search for validating faster using search algo 
 def filterData(df: pd.DataFrame):
     XFiltered = pd.DataFrame(columns=COLUMNS.keys())
+    
+    # loop through each row in the dataframe
     for x in df.index:
         row_passed = True
         filtered_row = []
 
-        for col_name, col_body in COLUMNS.items():
+        # loop through each column in the dataframe
+        for col_name in COLUMNS.keys():
             val = validate_column_value(col_name, df.loc[x, col_name])
             
             # If validation fails
@@ -277,29 +293,34 @@ def filterData(df: pd.DataFrame):
         # Append only if all columns passed validation
         if row_passed:
             XFiltered.loc[x] = filtered_row
-        # Print progress every 100 rows
-        if x % 100 == 0 and x > 0:
+        # Print progress every 1000 rows
+        if x % 1000 == 0 and x > 0:
             print(f"Processed {x} rows, {len(XFiltered)} passed validation...")
     print(f"Filtered data size: {XFiltered.shape[0]} rows, {XFiltered.shape[1]} columns")
+
+    # separate the credit score column from the rest of the dataframe
+    # Todo: change the logic to work with test data with no Credit_Score column
     YFiltered = XFiltered["Credit_Score"].copy()
     XFiltered = XFiltered.drop(columns=["Credit_Score"])
     return XFiltered, YFiltered
 
+# Convert all relevant features to binary/one-hot encoded features, fire?
 def convert_to_binary_features(X):
-    """Convert all relevant features to binary/one-hot encoded features"""
     X_binary = pd.DataFrame(index=X.index)
     
+    # loop through each column (feature) in the dataframe
     for col_name in X.columns:
         col_info = COLUMNS[col_name]
         col_data = X[col_name]
         
-        # Handle string types - convert to one-hot encoding
+        # Handle string types, convert to one-hot encoding
+        # (TODO: implement ________ as other in column name)
         if col_info.get("type") == "str":
             values = col_info.get("values", [])
             for idx, value in enumerate(values):
                 X_binary[f"{col_name}_{value}"] = (col_data == idx).astype(int)
 
-        # Handle list types (Type_of_Loan) - convert to one-hot encoding
+        # Handle list types (Type_of_Loan), convert to one-hot encoding
         elif col_info.get("type") == "list":
             values = col_info.get("values", [])
             loan_columns = {
@@ -324,6 +345,7 @@ def convert_to_binary_features(X):
 
         # Handle numeric types (int, float, time) - keep as numeric
         elif col_info.get("type") in ["int", "float", "time"]:
+            # using coerce to as safety for values that are not numeric to be filtered out with mask in preprocess func
             X_binary[col_name] = pd.to_numeric(col_data, errors='coerce')
     
     return X_binary
@@ -341,12 +363,6 @@ class my_svm():
         ###########
 
     # preprocess() function:
-    # _____ 1 pt _____
-    #  1) normalizes the data, 
-    # _____ 1 pt _____
-    #  2) removes missing values
-    # _____ 1 pt _____
-    #  3) assign labels to target
     def preprocess(self, X, y):
         # CODE HERE !
         # Convert categorical/list features to binary form
@@ -354,28 +370,22 @@ class my_svm():
 
         # Capture feature breakdown for reporting
         breakdown = {}
-        for feature_name, feature_info in COLUMNS.items():
+        for feature_name in COLUMNS.keys():
             if feature_name == "Credit_Score":
                 continue
+            # find all columns that start with the feature name
             matching_cols = [col for col in X_encoded.columns if col.startswith(f"{feature_name}_")]
             if matching_cols:
+                # count the number of columns within same feature for reporting
                 breakdown[feature_name] = len(matching_cols)
         breakdown["numeric_features"] = len([col for col in X_encoded.columns if col in X.columns])
         self.feature_breakdown = breakdown
 
-        # Remove missing values
-        mask = ~(X_encoded.isnull().any(axis=1) | y.isnull())
-        X_clean = X_encoded[mask].copy()
-        y_clean = y[mask].copy()
-
-        # Convert all columns to numeric
-        for col in X_clean.columns:
-            X_clean[col] = pd.to_numeric(X_clean[col], errors='coerce')
-
-        # Remove any remaining NaN values
-        mask_final = ~X_clean.isnull().any(axis=1)
-        X_processed = X_clean[mask_final]
-        y_processed = y_clean[mask_final]
+        # Convert to numeric and drop rows with invalid feature or target values in one pass
+        X_numeric = X_encoded.apply(pd.to_numeric, errors='coerce')
+        valid_rows = X_numeric.notnull().all(axis=1) & y.notnull()
+        X_processed = X_numeric[valid_rows].copy()
+        y_processed = y[valid_rows].copy()
 
         # Normalize the data
         X_scaled = self.scaler.fit_transform(X_processed)
@@ -389,10 +399,10 @@ class my_svm():
             # Already numeric from validation (indices: Good=0, Standard=1, Poor=2)
             y_labels = pd.to_numeric(y_processed, errors='coerce')
         
-        # Remove NaN in labels
-        mask_y = ~y_labels.isnull()
-        X_scaled = X_scaled[mask_y]
-        y_labels = y_labels[mask_y]
+        # Remove any rows where label mapping failed
+        valid_labels = y_labels.notnull()
+        X_scaled = X_scaled[valid_labels]
+        y_labels = y_labels[valid_labels]
         
         self.X_scaled = X_scaled
         self.y_labels = y_labels
@@ -402,16 +412,9 @@ class my_svm():
         return X_scaled, y_labels
 
     # cross_validation() function splits the data into train and test splits,
-    # _____ 1 pt _____
-    # Use k-fold with k=10
-    # _____ 1 pt _____
-    # the svm is trained on training set and tested on test set
-    # _____ 1 pt _____
-    # the output is the average accuracy across all train test splits.
-    # _____ 2 pt _____ (Integration of the two functions)
     def cross_validation(self, X, y, k=10):
         # CODE HERE !
-        kf = KFold(n_splits=k, shuffle=True, random_state=42)
+        kf = KFold(n_splits=k, shuffle=True, random_state=67)
         tss_scores = []
         accuracy_scores = []
         
@@ -434,23 +437,17 @@ class my_svm():
         ###########
         return np.mean(tss_scores), tss_scores, np.mean(accuracy_scores), accuracy_scores
 
-    # _____ 2 pt _____
     #training() function trains a SVM classification model on input features and corresponding target
     def training(self, X_train, y_train):
         # CODE HERE !
         #for now lets use linear kernel standard scaler, we will likely change this later
-        self.model = SVC(kernel='linear', random_state=42)
+        self.model = SVC(kernel='linear', random_state=67)
         self.model.fit(X_train, y_train)
         ###########
         return self.model
 
-    # _____ 2 pt _____
     # tss() function computes the accuracy of predicted outputs (i.e target prediction on test set)
-    # using the TSS measure given in the document
     def tss(self, y_true, y_pred):
-        # CODE HERE !
-        # TSS = Sensitivity + Specificity - 1
-        # For multi-class, calculate TSS for each class and average
         cm = confusion_matrix(y_true, y_pred, labels=[0, 1, 2])
         
         tss_scores = []
@@ -462,78 +459,73 @@ class my_svm():
             TN = np.sum(cm) - TP - FN - FP
             
             if (TP + FN) > 0 and (TN + FP) > 0:
-                sensitivity = TP / (TP + FN)
-                specificity = TN / (TN + FP)
-                tss = sensitivity + specificity - 1
+                tss = TP / (TP + FN) - FP / (FP + TN)
                 tss_scores.append(tss)
         
         # Return average TSS across all classes
         ###########
         return np.mean(tss_scores) if tss_scores else 0.0
 
-def visualize_results(svm_model, tss_scores, accuracy_scores, feature_names):
-    """Visualize SVM results and effectiveness"""
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    
-    # Plot 1: TSS scores across folds
-    ax1 = axes[0, 0]
-    ax1.bar(range(len(tss_scores)), tss_scores, color='steelblue', alpha=0.7)
-    ax1.axhline(y=np.mean(tss_scores), color='r', linestyle='--', linewidth=2, 
-                label=f'Mean TSS: {np.mean(tss_scores):.4f}')
-    ax1.set_xlabel('Fold')
-    ax1.set_ylabel('TSS Score')
-    ax1.set_title('TSS Scores Across 10-Fold Cross Validation')
-    ax1.set_xticks(range(len(tss_scores)))
-    ax1.set_xticklabels([f'Fold {i+1}' for i in range(len(tss_scores))])
-    ax1.legend()
-    ax1.grid(axis='y', alpha=0.3)
-    
-    # Plot 2: Accuracy scores across folds
-    ax2 = axes[0, 1]
-    ax2.bar(range(len(accuracy_scores)), accuracy_scores, color='green', alpha=0.7)
-    ax2.axhline(y=np.mean(accuracy_scores), color='r', linestyle='--', linewidth=2, 
-                label=f'Mean Accuracy: {np.mean(accuracy_scores):.4f}')
-    ax2.set_xlabel('Fold')
-    ax2.set_ylabel('Accuracy')
-    ax2.set_title('Accuracy Scores Across 10-Fold Cross Validation')
-    ax2.set_xticks(range(len(accuracy_scores)))
-    ax2.set_xticklabels([f'Fold {i+1}' for i in range(len(accuracy_scores))])
-    ax2.legend()
-    ax2.grid(axis='y', alpha=0.3)
-    
-    # Plot 3: Box plot of TSS distribution
-    ax3 = axes[1, 0]
-    ax3.boxplot(tss_scores, vert=True)
-    ax3.set_ylabel('TSS Score')
-    ax3.set_title('TSS Score Distribution')
-    ax3.grid(axis='y', alpha=0.3)
-    
-    # Plot 4: Box plot of Accuracy distribution
-    ax4 = axes[1, 1]
-    ax4.boxplot(accuracy_scores, vert=True)
-    ax4.set_ylabel('Accuracy')
-    ax4.set_title('Accuracy Distribution')
-    ax4.grid(axis='y', alpha=0.3)
-    
+def visualize_results(svm_model, tss_scores, accuracy_scores, feature_names, baseline_accuracy=None, baseline_label=None):
+   
+    mean_tss = np.mean(tss_scores)
+    std_tss = np.std(tss_scores)
+    mean_accuracy = np.mean(accuracy_scores)
+    std_accuracy = np.std(accuracy_scores)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    def _plot_metric(ax, scores, ylabel, title, average):
+        ax.bar(range(len(scores)), scores, color='steelblue', alpha=0.7)
+        ax.set_xlabel('Fold')
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.set_xticks(range(len(scores)))
+        ax.set_xticklabels([f'Fold {i+1}' for i in range(len(scores))], rotation=45)
+        ax.axhline(y=average, color='r', linestyle='--', linewidth=2, label=f'Average: {average:.4f}')
+        ax.legend()
+        ax.grid(axis='y', alpha=0.3)
+
+    _plot_metric(axes[0], tss_scores, 'TSS Score', 'TSS by Fold', mean_tss)
+    axes[0].set_facecolor('#f7f7f7')
+
+    axes[1].bar(range(len(accuracy_scores)), accuracy_scores, color='forestgreen', alpha=0.7)
+    axes[1].set_xlabel('Fold')
+    axes[1].set_ylabel('Accuracy')
+    axes[1].set_title('Accuracy by Fold')
+    axes[1].set_xticks(range(len(accuracy_scores)))
+    axes[1].set_xticklabels([f'Fold {i+1}' for i in range(len(accuracy_scores))], rotation=45)
+    axes[1].axhline(y=mean_accuracy, color='r', linestyle='--', linewidth=2, label=f'Average: {mean_accuracy:.4f}')
+    axes[1].legend()
+    axes[1].grid(axis='y', alpha=0.3)
+    axes[1].set_facecolor('#f7f7f7')
+
     plt.tight_layout()
-    plt.savefig('svm_results_all_features.png', dpi=300, bbox_inches='tight')
     plt.show()
-    
-    # Print summary
+
     print("\n" + "="*80)
     print("SVM MODEL RESULTS - ALL FEATURES WITH BINARY ENCODING")
     print("="*80)
     print(f"Total Features Used: {len(feature_names)}")
-    print(f"  - Binary/One-hot Features: {len([f for f in feature_names if '_' in f and f.split('_')[0] in COLUMNS.keys()])}")
-    print(f"  - Numeric Features: {len([f for f in feature_names if f in COLUMNS.keys()])}")
-    print(f"\nMean TSS Score: {np.mean(tss_scores):.6f} ± {np.std(tss_scores):.6f}")
-    print(f"Mean Accuracy: {np.mean(accuracy_scores):.6f} ± {np.std(accuracy_scores):.6f}")
-    print(f"\nTSS Scores per Fold:")
+    binary_features = [f for f in feature_names if '_' in f and f.split('_')[0] in COLUMNS.keys()]
+    print(f"  - Binary/One-hot Features: {len(binary_features)}")
+    print(f"  - Numeric Features: {len(feature_names) - len(binary_features)}")
+    print(f"\nAverage TSS Score: {mean_tss:.6f} (± {std_tss:.6f})")
+    print(f"Average Accuracy: {mean_accuracy:.6f} (± {std_accuracy:.6f})")
+    if baseline_accuracy is not None:
+        print(f"Majority-class Baseline Accuracy ({baseline_label}): {baseline_accuracy:.6f}")
+        print(f"Random Baseline Accuracy: 0.333333")
+        print(f"Improvement over Majority Baseline (Accuracy - Majority Baseline Accuracy): {mean_accuracy - baseline_accuracy:.6f}")
+        print(f"Improvement over Random Baseline (Accuracy - Random Baseline Accuracy): {mean_accuracy - 0.333333:.6f}")
+
+    print("\nPer-fold TSS:")
     for i, score in enumerate(tss_scores, 1):
         print(f"  Fold {i}: {score:.6f}")
-    print(f"\nAccuracy Scores per Fold:")
+
+    print("\nPer-fold Accuracy:")
     for i, score in enumerate(accuracy_scores, 1):
         print(f"  Fold {i}: {score:.6f}")
+
     print("="*80)
 
 if __name__ == "__main__":
@@ -566,12 +558,23 @@ if __name__ == "__main__":
             print(f"     - {feat}: {count} columns")
         print(f"   Numeric feature count: {svm_model.feature_breakdown.get('numeric_features', 0)}")
     
+    majority_label = y_processed.mode()[0]
+    baseline_accuracy = (y_processed == majority_label).mean()
+    label_map_inv = {0: "Good", 1: "Standard", 2: "Poor"}
+    majority_label_name = label_map_inv.get(majority_label, str(majority_label))
+    print(f"\nBaseline (majority class = {majority_label_name}): {baseline_accuracy:.6f} accuracy")
+    
     print("\n4. Performing 10-fold cross-validation...")
     mean_tss, tss_scores, mean_acc, accuracy_scores = svm_model.cross_validation(
         X_processed.values, y_processed.values, k=10
     )
     
-    print("\n5. Generating visualizations...")
-    visualize_results(svm_model, tss_scores, accuracy_scores, svm_model.feature_names)
-    
-    print("\nAnalysis complete!")
+    print("\n5. Reporting cross-validation statistics...")
+    visualize_results(
+        svm_model,
+        tss_scores,
+        accuracy_scores,
+        svm_model.feature_names,
+        baseline_accuracy=baseline_accuracy,
+        baseline_label=majority_label_name,
+    )
