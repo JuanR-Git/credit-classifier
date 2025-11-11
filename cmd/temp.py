@@ -196,7 +196,7 @@ COLUMNS = {
 }
 
 # fire
-def validate_column_value(col_name, value):
+def validateColumnValue(col_name, value):
     if col_name not in COLUMNS.keys():
         print("failed val bc of bad column:", col_name, value)
         return False
@@ -281,7 +281,7 @@ def filterData(df: pd.DataFrame):
 
         # loop through each column in the dataframe
         for col_name in COLUMNS.keys():
-            val = validate_column_value(col_name, df.loc[x, col_name])
+            val = validateColumnValue(col_name, df.loc[x, col_name])
             
             # If validation fails
             if val is False:
@@ -304,69 +304,70 @@ def filterData(df: pd.DataFrame):
     XFiltered = XFiltered.drop(columns=["Credit_Score"])
     return XFiltered, YFiltered
 
-# Convert all relevant features to binary/one-hot encoded features, fire?
-def convert_to_binary_features(X):
-    X_binary = pd.DataFrame(index=X.index)
-    
-    # loop through each column (feature) in the dataframe
-    for col_name in X.columns:
-        col_info = COLUMNS[col_name]
-        col_data = X[col_name]
-        
-        # Handle string types, convert to one-hot encoding
-        # (TODO: implement ________ as other in column name)
-        if col_info.get("type") == "str":
-            values = col_info.get("values", [])
-            for idx, value in enumerate(values):
-                X_binary[f"{col_name}_{value}"] = (col_data == idx).astype(int)
-
-        # Handle list types (Type_of_Loan), convert to one-hot encoding
-        elif col_info.get("type") == "list":
-            values = col_info.get("values", [])
-            loan_columns = {
-                loan_type: pd.Series(0, index=X.index)
-                for loan_type in values
-            }
-
-            for row_idx, entry in col_data.items():
-                if isinstance(entry, list):
-                    for loan_idx in entry:
-                        if 0 <= loan_idx < len(values):
-                            loan_type = values[loan_idx]
-                            loan_columns[loan_type].loc[row_idx] = 1
-                elif isinstance(entry, (int, float, np.integer)):
-                    loan_idx = int(entry)
-                    if 0 <= loan_idx < len(values):
-                        loan_type = values[loan_idx]
-                        loan_columns[loan_type].loc[row_idx] = 1
-
-            for loan_type, series in loan_columns.items():
-                X_binary[f"{col_name}_{loan_type}"] = series
-
-        # Handle numeric types (int, float, time) - keep as numeric
-        elif col_info.get("type") in ["int", "float", "time"]:
-            # using coerce to as safety for values that are not numeric to be filtered out with mask in preprocess func
-            X_binary[col_name] = pd.to_numeric(col_data, errors='coerce')
-    
-    return X_binary
-
-
-class my_svm():
+class mySvm():
     def __init__(self,):
-        # CODE HERE !
         self.scaler = StandardScaler()
         self.model = None
         self.X_scaled = None
         self.y_labels = None
         self.feature_names = None
         self.feature_breakdown = {}
-        ###########
+        self.X_encoded = None
+
+    # convertToBinaryFeatures() function: Convert all relevant features to binary/one-hot encoded features, fire?
+    def convertToBinaryFeatures(self, X):
+        X_binary = pd.DataFrame(index=X.index)
+        
+        # loop through each column (feature) in the dataframe
+        for col_name in X.columns:
+            col_info = COLUMNS[col_name]
+            col_data = X[col_name]
+            
+            # Handle string types, convert to one-hot encoding
+            # (TODO: implement ________ as other in column name)
+            if col_info.get("type") == "str":
+                values = col_info.get("values", [])
+                for idx, value in enumerate(values):
+                    X_binary[f"{col_name}_{value}"] = (col_data == idx).astype(int)
+
+            # Handle list types (Type_of_Loan), convert to one-hot encoding
+            elif col_info.get("type") == "list":
+                values = col_info.get("values", [])
+                loan_columns = {
+                    loan_type: pd.Series(0, index=X.index)
+                    for loan_type in values
+                }
+
+                for row_idx, entry in col_data.items():
+                    if isinstance(entry, list):
+                        for loan_idx in entry:
+                            if 0 <= loan_idx < len(values):
+                                loan_type = values[loan_idx]
+                                loan_columns[loan_type].loc[row_idx] = 1
+                    elif isinstance(entry, (int, float, np.integer)):
+                        loan_idx = int(entry)
+                        if 0 <= loan_idx < len(values):
+                            loan_type = values[loan_idx]
+                            loan_columns[loan_type].loc[row_idx] = 1
+
+                for loan_type, series in loan_columns.items():
+                    X_binary[f"{col_name}_{loan_type}"] = series
+
+            # Handle numeric types (int, float, time) - keep as numeric
+            elif col_info.get("type") in ["int", "float", "time"]:
+                # using coerce to as safety for values that are not numeric to be filtered out with mask in preprocess func
+                X_binary[col_name] = pd.to_numeric(col_data, errors='coerce')
+        
+        self.X_encoded = X_binary
+        return X_binary
+
+        
 
     # preprocess() function:
     def preprocess(self, X, y):
-        # CODE HERE !
+
         # Convert categorical/list features to binary form
-        X_encoded = convert_to_binary_features(X)
+        X_encoded = self.X_encoded
 
         # Capture feature breakdown for reporting
         breakdown = {}
@@ -408,12 +409,12 @@ class my_svm():
         self.y_labels = y_labels
         self.feature_names = X_scaled.columns.tolist()
         
-        ###########
+       
         return X_scaled, y_labels
 
     # cross_validation() function splits the data into train and test splits,
     def cross_validation(self, X, y, k=10):
-        # CODE HERE !
+
         kf = KFold(n_splits=k, shuffle=True, random_state=67)
         tss_scores = []
         accuracy_scores = []
@@ -434,16 +435,16 @@ class my_svm():
             tss_scores.append(tss)
             accuracy_scores.append(acc)
         
-        ###########
+        
         return np.mean(tss_scores), tss_scores, np.mean(accuracy_scores), accuracy_scores
 
     #training() function trains a SVM classification model on input features and corresponding target
     def training(self, X_train, y_train):
-        # CODE HERE !
+
         #for now lets use linear kernel standard scaler, we will likely change this later
         self.model = SVC(kernel='linear', random_state=67)
         self.model.fit(X_train, y_train)
-        ###########
+        
         return self.model
 
     # tss() function computes the accuracy of predicted outputs (i.e target prediction on test set)
@@ -463,7 +464,6 @@ class my_svm():
                 tss_scores.append(tss)
         
         # Return average TSS across all classes
-        ###########
         return np.mean(tss_scores) if tss_scores else 0.0
 
 def visualize_results(svm_model, tss_scores, accuracy_scores, feature_names, baseline_accuracy=None, baseline_label=None):
@@ -547,7 +547,8 @@ if __name__ == "__main__":
     print(f"   Using {len(XFiltered)} datapoints")
     
     print("\n3. Initializing and preprocessing data for SVM (including categorical encoding)...")
-    svm_model = my_svm()
+    svm_model = mySvm()
+    svm_model.convertToBinaryFeatures(XFiltered)
     X_processed, y_processed = svm_model.preprocess(XFiltered, YFiltered)
     print(f"   Processed data shape: X={X_processed.shape}, y={y_processed.shape}")
     if svm_model.feature_breakdown:
