@@ -10,6 +10,8 @@ from sklearn.metrics import confusion_matrix, accuracy_score
 import matplotlib.pyplot as plt
 
 TRAIN_DATA = 'train.csv'
+NUMBER_OF_DATAPOINTS = 10000 # for testing we reduce the number of datapoints by a factor of 10
+TESTING_NUMBER_OF_DATAPOINTS = 1000 # for testing we reduce the number of datapoints by a factor of 10
 COLUMNS = {
     "Age": {
         "type": "int",
@@ -266,7 +268,7 @@ def dataCreation(filePath: str):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(script_dir, '..', 'data')
     data_path = os.path.join(data_dir, TRAIN_DATA)
-    df = pd.read_csv(data_path, usecols=list(COLUMNS.keys()), encoding="utf-8")
+    df = pd.read_csv(data_path, usecols=list(COLUMNS.keys()), encoding="utf-8", nrows=NUMBER_OF_DATAPOINTS)
     df = df.dropna()  # Filter out rows with NULL values
     return df
 
@@ -314,7 +316,7 @@ class mySvm():
         self.feature_breakdown = {}
         self.X_encoded = None
 
-    # convertToBinaryFeatures() function: Convert all relevant features to binary/one-hot encoded features, fire?
+    # convertToBinaryFeatures() function converts all relevant features to binary/one-hot encoded features, fire?
     def convertToBinaryFeatures(self, X):
         X_binary = pd.DataFrame(index=X.index)
         
@@ -360,8 +362,6 @@ class mySvm():
         
         self.X_encoded = X_binary
         return X_binary
-
-        
 
     # preprocess() function:
     def preprocess(self, X, y):
@@ -412,8 +412,8 @@ class mySvm():
        
         return X_scaled, y_labels
 
-    # cross_validation() function splits the data into train and test splits,
-    def cross_validation(self, X, y, k=10):
+    # crossValidation() function splits the data into train and test splits,
+    def crossValidation(self, X, y, k=10):
 
         kf = KFold(n_splits=k, shuffle=True, random_state=67)
         tss_scores = []
@@ -540,10 +540,10 @@ if __name__ == "__main__":
     XFiltered, YFiltered = filterData(df)
     
     # Limit to 1000 datapoints for faster testing
-    print(f"\n2. Limiting dataset to 1000 datapoints for faster testing...")
-    if len(XFiltered) > 1000:
-        XFiltered = XFiltered.head(1000)
-        YFiltered = YFiltered.head(1000)
+    print(f"\n2. Limiting dataset to TESTING_NUMBER_OF_DATAPOINTS  for faster testing...")
+    if len(XFiltered) > TESTING_NUMBER_OF_DATAPOINTS:
+        XFiltered = XFiltered.head(TESTING_NUMBER_OF_DATAPOINTS)
+        YFiltered = YFiltered.head(TESTING_NUMBER_OF_DATAPOINTS)
     print(f"   Using {len(XFiltered)} datapoints")
     
     print("\n3. Initializing and preprocessing data for SVM (including categorical encoding)...")
@@ -566,7 +566,7 @@ if __name__ == "__main__":
     print(f"\nBaseline (majority class = {majority_label_name}): {baseline_accuracy:.6f} accuracy")
     
     print("\n4. Performing 10-fold cross-validation...")
-    mean_tss, tss_scores, mean_acc, accuracy_scores = svm_model.cross_validation(
+    mean_tss, tss_scores, mean_acc, accuracy_scores = svm_model.crossValidation(
         X_processed.values, y_processed.values, k=10
     )
     
