@@ -10,6 +10,7 @@ from sklearn.metrics import confusion_matrix, accuracy_score
 import matplotlib.pyplot as plt
 
 TRAIN_DATA = 'train.csv'
+NUMBER_OF_DATAPOINTS = 3000
 COLUMNS = {
     "Age": {
         "type": "int",
@@ -266,7 +267,7 @@ def dataCreation(filePath: str):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(script_dir, '..', 'data')
     data_path = os.path.join(data_dir, TRAIN_DATA)
-    df = pd.read_csv(data_path, usecols=list(COLUMNS.keys()), encoding="utf-8")
+    df = pd.read_csv(data_path, usecols=list(COLUMNS.keys()), encoding="utf-8", nrows=NUMBER_OF_DATAPOINTS)
     df = df.dropna()  # Filter out rows with NULL values
     return df
 
@@ -466,6 +467,7 @@ class mySvm():
         # Return average TSS across all classes
         return np.mean(tss_scores) if tss_scores else 0.0
 
+
 def visualize_results(svm_model, tss_scores, accuracy_scores, feature_names, baseline_accuracy=None, baseline_label=None):
    
     mean_tss = np.mean(tss_scores)
@@ -539,12 +541,8 @@ if __name__ == "__main__":
     df = dataCreation(TRAIN_DATA)
     XFiltered, YFiltered = filterData(df)
     
-    # Limit to 1000 datapoints for faster testing
-    print(f"\n2. Limiting dataset to 1000 datapoints for faster testing...")
-    if len(XFiltered) > 1000:
-        XFiltered = XFiltered.head(1000)
-        YFiltered = YFiltered.head(1000)
-    print(f"   Using {len(XFiltered)} datapoints")
+    # Limit to NUMBER_OF_DATAPOINTS datapoints for faster testing
+    print(f"\n2. Limiting dataset to {len(XFiltered)} datapoints for faster testing...")
     
     print("\n3. Initializing and preprocessing data for SVM (including categorical encoding)...")
     svm_model = mySvm()
