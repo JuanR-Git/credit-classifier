@@ -7,18 +7,22 @@ import pandas as pd
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
 
-FIRST_LAYER_NEURONS_DROPOUT = 32
+FIRST_LAYER_NEURONS_DROPOUT = 64
 SECOND_LAYER_NEURONS_DROPOUT = 16
+# THIRD_LAYER_NEURONS_DROPOUT = 16
 OUTPUT_LAYER_NEURONS_DROPOUT = 3
 
 TRAIN_DATA = 'train.csv'
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 5e-4
 NUMBER_OF_DATAPOINTS = 30000
 NUMBER_OF_TOTAL_COLUMNS = 30
-DROPOUT_RATE = 0.3
-BATCH_SIZE = 32
-L2_CONSTANT = 1e-4
+DROPOUT_RATE = 0.4
+BATCH_SIZE = 64
+L2_CONSTANT = 1e-3
 COLUMNS = {
     "Age": {
         "type": "int",
@@ -215,7 +219,6 @@ def dataCreation(filePath: str):
     df = df.dropna()  # Filter out rows with NULL values
     return df
 
-# future improvement: make the search for validating faster using search algo 
 def filterData(df: pd.DataFrame):
     XFiltered = []
     YFiltered = []
@@ -326,13 +329,9 @@ def normalizeData(X, Y):
 
     return X_normalized, Y
 
-class CreditClassifierNN(nn.Module):
-    """
-    TODO: Complete this neural network class to include dropout layers.
+"""
 
-    The dropout_rate parameter should control the dropout probability.
-    When dropout_rate=0.0, no dropout is applied.
-    """
+class CreditClassifierNN(nn.Module):
 
     def __init__(self, input_size, dropout_rate=0.0):
         super(CreditClassifierNN, self).__init__()
@@ -340,17 +339,16 @@ class CreditClassifierNN(nn.Module):
         self.fc1 = nn.Linear(input_size, FIRST_LAYER_NEURONS_DROPOUT)
         self.fc2 = nn.Linear(FIRST_LAYER_NEURONS_DROPOUT, SECOND_LAYER_NEURONS_DROPOUT)
         self.fc3 = nn.Linear(SECOND_LAYER_NEURONS_DROPOUT, OUTPUT_LAYER_NEURONS_DROPOUT)
+        # self.fc4 = nn.Linear(THIRD_LAYER_NEURONS_DROPOUT, OUTPUT_LAYER_NEURONS_DROPOUT)
         # Define activation functions and dropout
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(dropout_rate)
         self.dropout_rate = dropout_rate
 
     def forward(self, x):
-        """
-        Forward Pass with Dropout Layers.
-        Apply dropout after each hidden layer if dropout_rate > 0.0.
-        Return the final output.
-        """
+        if self.dropout_rate > 0.0:
+            x = self.dropout(x)
+
         # First hidden layer with ReLU and optional dropout
         x = self.relu(self.fc1(x))
         if self.dropout_rate > 0.0:
@@ -360,12 +358,15 @@ class CreditClassifierNN(nn.Module):
         x = self.relu(self.fc2(x))
         if self.dropout_rate > 0.0:
             x = self.dropout(x)
+
+        # x = self.relu(self.fc3(x))
+        # if self.dropout_rate > 0.0:
+        #     x = self.dropout(x)
         
         # Output layer
         return self.fc3(x)
 
 def calculate_full_loss(model, criterion, X, Y):
-    """Helper function to calculate loss over an entire dataset."""
     model.eval() # Set model to evaluation mode
     with torch.no_grad(): # Disable gradient calculation
         outputs = model(X)
@@ -376,15 +377,13 @@ def calculate_full_loss(model, criterion, X, Y):
 def calculate_accuracy(model, X, Y):
     model.eval()
     with torch.no_grad():
-        logits = model(X)
-        correct = (logits.argmax(dim=1) == Y.argmax(dim=1)).sum().item()
+        outputs = model(X)
+        correct = (outputs.argmax(dim=1) == Y).sum().item()
         return correct / len(Y)
 
 def train_with_dropout(model, criterion, optimizer, X_train, Y_train, X_val, Y_val,
                                  num_iterations, batch_size, check_every):
-    """
-    TODO: Complete this training function to support dropout.
-    """
+    
     # CODE HERE: Use need to fill like using miniSGD in part 2
     train_dataset = TensorDataset(X_train, Y_train)
 
@@ -412,9 +411,12 @@ def train_with_dropout(model, criterion, optimizer, X_train, Y_train, X_val, Y_v
             optimizer.zero_grad()
             outputs = model(batch_X)
 
+            # preds = outputs.argmax(dim=1).numpy()
+            # labels = batch_Y.numpy()
             # Compute loss and backpropagate
             # outputs_index = torch.argmax(outputs, dim=1)
 
+            # print("batch_Y index:", torch.argmax(batch_Y, dim=1), "outputs index:", torch.argmax(outputs, dim=1))#, "outputs_index:", outputs_index, )
             # print("batch_Y:", batch_Y, "outputs:", outputs)#, "outputs_index:", outputs_index, )
             loss = criterion(outputs, batch_Y)
             loss.backward()
@@ -434,10 +436,42 @@ def train_with_dropout(model, criterion, optimizer, X_train, Y_train, X_val, Y_v
                 iterations.append(iteration)
                 train_accs.append(train_acc)
                 val_accs.append(val_acc)
-                print(f"Check #{iteration/check_every}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}, Train Acc={train_acc:.4f}, Val Acc={val_acc:.4f}")
+                print(f"Check {iteration//check_every}/{num_iterations//check_every}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}, Train Acc={train_acc:.4f}, Val Acc={val_acc:.4f}")
             # increase iteration count
             iteration += 1
     return train_losses, val_losses, train_accs, val_accs, iterations, model
+    
+def evaluate_classification_metrics(model, X_val, Y_val, batch_size=64):
+    model.eval()
+    all_preds = []
+    all_labels = []
+    val_dataset = TensorDataset(X_val, Y_val)
+    dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
+
+    with torch.no_grad():
+        for X, Y in dataloader:
+            logits = model(X)                    # raw scores
+            preds = logits.argmax(dim=1)         # predicted class index
+            labels = Y                           # ground truth indices
+
+            all_preds.append(preds.cpu())
+            all_labels.append(labels.cpu())
+
+    all_preds = torch.cat(all_preds).numpy()
+    all_labels = torch.cat(all_labels).numpy()
+
+    # Confusion Matrix
+    cm = confusion_matrix(all_labels, all_preds)
+
+    # Classification Report
+    report = classification_report(
+        all_labels, 
+        all_preds, 
+        target_names=["Good", "Standard", "Poor"]
+    )
+
+    return cm, report
+"""
     
 if __name__ == "__main__":
     np.set_printoptions(threshold=sys.maxsize)
@@ -445,44 +479,115 @@ if __name__ == "__main__":
     df = dataCreation(TRAIN_DATA)
     XFiltered_unorm, YFiltered_unorm = filterData(df)
     XFiltered, YFiltered = normalizeData(XFiltered_unorm, YFiltered_unorm)
+
+    num_good = YFiltered.count([1,0,0])
+    num_standard = YFiltered.count([0,1,0])
+    num_poor = YFiltered.count([0,0,1])
+    print("Class distribution - Good:", num_good, "Standard:", num_standard, "Poor:", num_poor)
+
+    YFiltered = np.argmax(YFiltered, axis=1)
+
+    class_counts = torch.tensor([num_good, num_standard, num_poor], dtype=torch.float32)
+    class_weights = 1.0 / class_counts  # inverse frequency
+    class_weights = class_weights / class_weights.sum()
+
     # split XFiltered, YFiltered into training and validation sets
-    split_index = int(0.8 * len(XFiltered))
-    X_train_t = torch.tensor(XFiltered[:split_index], dtype=torch.float32)
-    Y_train_t = torch.tensor(YFiltered[:split_index], dtype=torch.float32)
-    X_val_t = torch.tensor(XFiltered[split_index:], dtype=torch.float32)
-    Y_val_t = torch.tensor(YFiltered[split_index:], dtype=torch.float32)
-    print("Training data size:", X_train_t.shape, Y_train_t.shape)
-    print("Validation data size:", X_val_t.shape, Y_val_t.shape)
+    # split_index = int(0.8 * len(XFiltered))
+    # X_train_t = torch.tensor(XFiltered[:split_index], dtype=torch.float32)
+    # Y_train_t = torch.tensor(YFiltered[:split_index], dtype=torch.float32)
+    # Y_train_t_indices = torch.argmax(Y_train_t, dim=1)
+    # X_val_t = torch.tensor(XFiltered[split_index:], dtype=torch.float32)
+    # Y_val_t = torch.tensor(YFiltered[split_index:], dtype=torch.float32)
+    # Y_val_t_indices = torch.argmax(Y_val_t, dim=1)
+    # print("Training data size:", X_train_t.shape, Y_train_t.shape)
+    # print("Validation data size:", X_val_t.shape, Y_val_t.shape)
+    X_train, X_val, y_train, y_val = train_test_split(
+        XFiltered, YFiltered, test_size=0.2, stratify=YFiltered, random_state=42
+    )
 
-    EPOCH_LEN = len(X_train_t)  # Number of training samples
-    credit_nn = CreditClassifierNN(input_size=NUMBER_OF_TOTAL_COLUMNS, dropout_rate=DROPOUT_RATE)
+    # EPOCH_LEN = len(X_train_t)  # Number of training samples
 
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(credit_nn.parameters(), lr=LEARNING_RATE, weight_decay=L2_CONSTANT)
-    print("X_train_t shape:", X_train_t.shape, "Y_train_t shape:", Y_train_t.shape, "X_val_t shape:", X_val_t.shape, "Y_val_t shape:", Y_val_t.shape)
+    model = RandomForestClassifier(
+        n_estimators=500,          # number of trees
+        max_depth=None,           # fully grown trees
+        min_samples_split=2,
+        min_samples_leaf=1,
+        class_weight="balanced",  # fixes your class imbalance
+        n_jobs=-1,                # use all CPU cores
+        random_state=42
+    )
 
-    train_losses, val_losses, train_accs, val_accs, iterations, model = train_with_dropout(credit_nn, criterion, optimizer, X_train_t, Y_train_t, X_val_t, Y_val_t, EPOCH_LEN*5, BATCH_SIZE, EPOCH_LEN//10)
+    # -----------------------------------------------------------
+    # 5. TRAIN
+    # -----------------------------------------------------------
+    print("Training Random Forest...")
+    model.fit(X_train, y_train)
 
-    # --- Plotting
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    # -----------------------------------------------------------
+    # 6. VALIDATION PREDICTIONS
+    # -----------------------------------------------------------
+    preds = model.predict(X_val)
+    # -----------------------------------------------------------
+    # 7. METRICS
+    # -----------------------------------------------------------
+    print("\nCONFUSION MATRIX:")
+    print(confusion_matrix(y_val, preds))
 
-    # Plot 1: Loss
-    ax1.plot(iterations, train_losses, label='Minibatch - Train Loss', linestyle=':', color='green', marker='o')
-    ax1.plot(iterations, val_losses, label='Minibatch - Validation Loss', linestyle='-', color='green', marker='x')
-    ax1.set_title('Minibatch FeedForward NN Training Loss with Dropout')
-    ax1.set_xlabel('Iterations')
-    ax1.set_ylabel('Loss (BCELoss)')
-    ax1.legend()
-    ax1.grid(True)
+    print("\nCLASSIFICATION REPORT:")
+    print(
+        classification_report(
+            y_val,
+            preds,
+            target_names=["Good", "Standard", "Poor"]
+        )
+    )
 
-    # Plot 2: Accuracy
-    ax2.plot(iterations, train_accs, label='Minibatch - Train Accuracy', linestyle=':', color='blue', marker='o')
-    ax2.plot(iterations, val_accs, label='Minibatch - Validation Accuracy', linestyle='-', color='blue', marker='x')
-    ax2.set_title('Minibatch FeedForward NN Training Accuracy with Dropout')
-    ax2.set_xlabel('Iterations')
-    ax2.set_ylabel('Accuracy')
-    ax2.legend()
-    ax2.grid(True)
+    # -----------------------------------------------------------
+    # 8. OPTIONAL: FEATURE IMPORTANCES (USEFUL!)
+    # -----------------------------------------------------------
+    importances = model.feature_importances_
+    sorted_idx = np.argsort(importances)[::-1]
 
-    plt.tight_layout()
-    plt.show()
+    print("\nTOP FEATURE IMPORTANCES:")
+    for idx in sorted_idx[:10]:
+        print(f"Feature {idx}: importance={importances[idx]:.4f}")
+
+    # credit_nn = CreditClassifierNN(input_size=NUMBER_OF_TOTAL_COLUMNS, dropout_rate=DROPOUT_RATE)
+
+    # criterion = nn.CrossEntropyLoss(weight=class_weights)
+    # optimizer = torch.optim.Adam(credit_nn.parameters(), lr=LEARNING_RATE, weight_decay=L2_CONSTANT)
+    # print("X_train_t shape:", X_train_t.shape, "Y_train_t shape:", Y_train_t_indices.shape, "X_val_t shape:", X_val_t.shape, "Y_val_t shape:", Y_val_t_indices.shape)
+
+    # train_losses, val_losses, train_accs, val_accs, iterations, model = train_with_dropout(credit_nn, criterion, optimizer, X_train_t, Y_train_t_indices, X_val_t, Y_val_t_indices, EPOCH_LEN*5, BATCH_SIZE, EPOCH_LEN//10)
+
+    # cm, report = evaluate_classification_metrics(model, X_val_t, Y_val_t_indices, batch_size=BATCH_SIZE)
+
+    # print("CONFUSION MATRIX:")
+    # print(cm)
+
+    # print("\nCLASSIFICATION REPORT:")
+    # print(report)
+
+    # # --- Plotting
+    # fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    # # Plot 1: Loss
+    # ax1.plot(iterations, train_losses, label='Minibatch - Train Loss', linestyle=':', color='green', marker='o')
+    # ax1.plot(iterations, val_losses, label='Minibatch - Validation Loss', linestyle='-', color='green', marker='x')
+    # ax1.set_title('Minibatch FeedForward NN Training Loss with Dropout')
+    # ax1.set_xlabel('Iterations')
+    # ax1.set_ylabel('Loss (CrossEntropyLoss)')
+    # ax1.legend()
+    # ax1.grid(True)
+
+    # # Plot 2: Accuracy
+    # ax2.plot(iterations, train_accs, label='Minibatch - Train Accuracy', linestyle=':', color='blue', marker='o')
+    # ax2.plot(iterations, val_accs, label='Minibatch - Validation Accuracy', linestyle='-', color='blue', marker='x')
+    # ax2.set_title('Minibatch FeedForward NN Training Accuracy with Dropout')
+    # ax2.set_xlabel('Iterations')
+    # ax2.set_ylabel('Accuracy')
+    # ax2.legend()
+    # ax2.grid(True)
+
+    # plt.tight_layout()
+    # plt.show()
