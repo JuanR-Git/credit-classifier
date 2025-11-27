@@ -396,7 +396,7 @@ if __name__ == "__main__":
 
     gs=GridSearchCV(estimator=model, param_grid=param_grid, cv=5, n_jobs=-1, verbose=3)
     gs = gs.fit(X_train, y_train)
-    print("Best parameters found: ", gs.best_params_)
+    print("Best parameters found: ", gs.best_params_, "with score: ", gs.best_score_)
 
     # # -----------------------------------------------------------
     # # 5. TRAIN
