@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
 import sys
 import re
 import pandas as pd
@@ -8,21 +7,12 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
 
-FIRST_LAYER_NEURONS_DROPOUT = 32
-SECOND_LAYER_NEURONS_DROPOUT = 16
-# THIRD_LAYER_NEURONS_DROPOUT = 16
-OUTPUT_LAYER_NEURONS_DROPOUT = 3
-
 TRAIN_DATA = 'train.csv'
-LEARNING_RATE = 1e-4
-NUMBER_OF_DATAPOINTS = 30000
+NUMBER_OF_DATAPOINTS = 1000
 NUMBER_OF_TOTAL_COLUMNS = 21
-DROPOUT_RATE = 0.4
-BATCH_SIZE = 32
-L2_CONSTANT = 1e-4
 COLUMNS = {
     "Age": {
         "type": "int",
@@ -215,7 +205,7 @@ def dataCreation(filePath: str):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(script_dir, '..', 'data')
     data_path = os.path.join(data_dir, filePath)
-    df = pd.read_csv(data_path, usecols=list(COLUMNS.keys()), encoding="utf-8")#, nrows=#NUMBER_OF_DATAPOINTS)
+    df = pd.read_csv(data_path, usecols=list(COLUMNS.keys()), encoding="utf-8")#, nrows=NUMBER_OF_DATAPOINTS)
     df = df.dropna()  # Filter out rows with NULL values
     return df
 
@@ -337,144 +327,38 @@ def normalizeData(X, Y):
 
     return X_normalized, Y
 
+# def evaluate_classification_metrics(model, X_val, Y_val, batch_size=64):
+#     model.eval()
+#     all_preds = []
+#     all_labels = []
+#     val_dataset = TensorDataset(X_val, Y_val)
+#     dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
+
+#     with torch.no_grad():
+#         for X, Y in dataloader:
+#             logits = model(X)                    # raw scores
+#             preds = logits.argmax(dim=1)         # predicted class index
+#             labels = Y                           # ground truth indices
+
+#             all_preds.append(preds.cpu())
+#             all_labels.append(labels.cpu())
+
+#     all_preds = torch.cat(all_preds).numpy()
+#     all_labels = torch.cat(all_labels).numpy()
+
+#     # Confusion Matrix
+#     cm = confusion_matrix(all_labels, all_preds)
+
+#     # Classification Report
+#     report = classification_report(
+#         all_labels, 
+#         all_preds, 
+#         target_names=["Good", "Standard", "Poor"]
+#     )
+
+#     return cm, report
 
 
-class CreditClassifierNN(nn.Module):
-
-    def __init__(self, input_size, dropout_rate=0.0):
-        super(CreditClassifierNN, self).__init__()
-        # Define connected layers
-        self.fc1 = nn.Linear(input_size, FIRST_LAYER_NEURONS_DROPOUT)
-        self.fc2 = nn.Linear(FIRST_LAYER_NEURONS_DROPOUT, SECOND_LAYER_NEURONS_DROPOUT)
-        self.fc3 = nn.Linear(SECOND_LAYER_NEURONS_DROPOUT, OUTPUT_LAYER_NEURONS_DROPOUT)
-        # self.fc4 = nn.Linear(THIRD_LAYER_NEURONS_DROPOUT, OUTPUT_LAYER_NEURONS_DROPOUT)
-        # Define activation functions and dropout
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(dropout_rate)
-        self.dropout_rate = dropout_rate
-
-    def forward(self, x):
-        if self.dropout_rate > 0.0:
-            x = self.dropout(x)
-
-        # First hidden layer with ReLU and optional dropout
-        x = self.relu(self.fc1(x))
-        if self.dropout_rate > 0.0:
-            x = self.dropout(x)
-        
-        # Second hidden layer with ReLU and optional dropout
-        x = self.relu(self.fc2(x))
-        if self.dropout_rate > 0.0:
-            x = self.dropout(x)
-
-        # x = self.relu(self.fc3(x))
-        # if self.dropout_rate > 0.0:
-        #     x = self.dropout(x)
-        
-        # Output layer
-        return self.fc3(x)
-
-def calculate_full_loss(model, criterion, X, Y):
-    model.eval() # Set model to evaluation mode
-    with torch.no_grad(): # Disable gradient calculation
-        outputs = model(X)
-        loss = criterion(outputs, Y)
-    model.train() # Set model back to train mode
-    return loss.item()
-
-def calculate_accuracy(model, X, Y):
-    model.eval()
-    with torch.no_grad():
-        outputs = model(X)
-        correct = (outputs.argmax(dim=1) == Y).sum().item()
-        return correct / len(Y)
-
-def train_with_dropout(model, criterion, optimizer, X_train, Y_train, X_val, Y_val,
-                                 num_iterations, batch_size, check_every):
-    
-    train_dataset = TensorDataset(X_train, Y_train)
-
-    train_losses = []
-    val_losses = []
-    iterations = []
-    train_accs = []
-    val_accs = []
-    iteration = 0
-    loss = None
-
-    print(f"Training for {num_iterations} iterations with batch size {batch_size} (check every {check_every})")
-            
-    model.train()
-    # Keep looping until total iterations are reached
-    while iteration < num_iterations:
-        # Create new dataloader for each completed examination of dataset to shuffle data
-        data_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-
-        # Loop through batches
-        for batch_X, batch_Y in data_loader:
-            if iteration > num_iterations:
-                break
-
-            optimizer.zero_grad()
-            outputs = model(batch_X)
-            loss = criterion(outputs, batch_Y)
-            loss.backward()
-            optimizer.step()
-
-            # Check and record losses periodically
-            if iteration % check_every == 0:
-                # Calculate full losses and accuracies
-                train_loss = calculate_full_loss(model, criterion, X_train, Y_train)
-                val_loss = calculate_full_loss(model, criterion, X_val, Y_val)
-                train_acc = calculate_accuracy(model, X_train, Y_train)
-                val_acc = calculate_accuracy(model, X_val, Y_val)
-                
-                if len(val_accs) > 0 and abs(val_acc - val_accs[-1]) < 0.005:
-                    print("Early stopping due to minimal validation accuracy improvement.")
-                    return train_losses, val_losses, train_accs, val_accs, iterations, model
-                # Append metrics
-                train_losses.append(train_loss)
-                val_losses.append(val_loss)
-                iterations.append(iteration)
-                train_accs.append(train_acc)
-                val_accs.append(val_acc)
-                print(f"Check {iteration//check_every}/{num_iterations//check_every}: Train Loss={train_loss:.4f}, Val Loss={val_loss:.4f}, Train Acc={train_acc:.4f}, Val Acc={val_acc:.4f}")
-            # increase iteration count
-            iteration += 1
-    return train_losses, val_losses, train_accs, val_accs, iterations, model
-    
-def evaluate_classification_metrics(model, X_val, Y_val, batch_size=64):
-    model.eval()
-    all_preds = []
-    all_labels = []
-    val_dataset = TensorDataset(X_val, Y_val)
-    dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
-
-    with torch.no_grad():
-        for X, Y in dataloader:
-            logits = model(X)                    # raw scores
-            preds = logits.argmax(dim=1)         # predicted class index
-            labels = Y                           # ground truth indices
-
-            all_preds.append(preds.cpu())
-            all_labels.append(labels.cpu())
-
-    all_preds = torch.cat(all_preds).numpy()
-    all_labels = torch.cat(all_labels).numpy()
-
-    # Confusion Matrix
-    cm = confusion_matrix(all_labels, all_preds)
-
-    # Classification Report
-    report = classification_report(
-        all_labels, 
-        all_preds, 
-        target_names=["Good", "Standard", "Poor"]
-    )
-
-    return cm, report
-
-    
 if __name__ == "__main__":
     np.set_printoptions(threshold=sys.maxsize)
     torch.set_printoptions(edgeitems=7)
@@ -487,57 +371,74 @@ if __name__ == "__main__":
     num_poor = YFiltered.count([0,0,1])
     print("Class distribution - Good:", num_good, "Standard:", num_standard, "Poor:", num_poor)
 
-    # YFiltered = np.argmax(YFiltered, axis=1)
 
-    class_counts = torch.tensor([num_good, num_standard, num_poor], dtype=torch.float32)
-    class_weights = 1.0 / class_counts  # inverse frequency
-    class_weights = class_weights / class_weights.sum()
+    # class_counts = [num_good, num_standard, num_poor]
+    # class_weights = 1.0 / class_counts  # inverse frequency
+    # class_weights = class_weights / class_weights.sum()
 
-    # split XFiltered, YFiltered into training and validation sets
-    split_index = int(0.8 * len(XFiltered))
-    X_train_t = torch.tensor(XFiltered[:split_index], dtype=torch.float32)
-    Y_train_t = torch.tensor(YFiltered[:split_index], dtype=torch.float32)
-    Y_train_t_indices = torch.argmax(Y_train_t, dim=1)
-    X_val_t = torch.tensor(XFiltered[split_index:], dtype=torch.float32)
-    Y_val_t = torch.tensor(YFiltered[split_index:], dtype=torch.float32)
-    Y_val_t_indices = torch.argmax(Y_val_t, dim=1)
-    print("Training data size:", X_train_t.shape, Y_train_t.shape)
-    print("Validation data size:", X_val_t.shape, Y_val_t.shape)
-    # X_train, X_val, y_train, y_val = train_test_split(
-    #     XFiltered, YFiltered, test_size=0.2, stratify=YFiltered, random_state=42
+    X_train, X_val, y_train, y_val = train_test_split(
+        XFiltered, YFiltered, test_size=0.2, stratify=YFiltered, random_state=42
+    )
+
+    model = RandomForestClassifier(
+        class_weight="balanced",  # fixes your class imbalance
+        n_jobs=-1,                # use all CPU cores
+        random_state=42
+    )
+
+    param_grid = {
+        'n_estimators': [100, 250, 500, 1000],
+        'max_depth': [None, 10, 50, 100],
+        'min_samples_split': [5, 10, 20, 50],
+        'min_samples_leaf': [2, 5, 10, 20],
+        'bootstrap': [True, False]
+    }
+
+    gs=GridSearchCV(estimator=model, param_grid=param_grid, cv=5, n_jobs=-1, verbose=3)
+    gs = gs.fit(X_train, y_train)
+    print("Best parameters found: ", gs.best_params_)
+
+    # # -----------------------------------------------------------
+    # # 5. TRAIN
+    # # -----------------------------------------------------------
+    # print("Training Random Forest...")
+
+    # # -----------------------------------------------------------
+    # # 6. VALIDATION PREDICTIONS
+    # # -----------------------------------------------------------
+    # preds = model.predict(X_val)
+    # # -----------------------------------------------------------
+    # # 7. METRICS
+    # # -----------------------------------------------------------
+    # print("\nCONFUSION MATRIX:")
+    # y_val_idx = np.argmax(y_val, axis=1)
+    # preds_idx = np.argmax(preds, axis=1)
+    # print(confusion_matrix(y_val_idx, preds_idx))
+
+    # print("\nCLASSIFICATION REPORT:")
+    # print(
+    #     classification_report(
+    #         y_val,
+    #         preds,
+    #         target_names=["Good", "Standard", "Poor"]
+    #     )
     # )
 
-    EPOCH_LEN = len(X_train_t)  # Number of training samples
+    # # -----------------------------------------------------------
+    # # 8. OPTIONAL: FEATURE IMPORTANCES (USEFUL!)
+    # # -----------------------------------------------------------
+    # importances = model.feature_importances_
+    # sorted_idx = np.argsort(importances)[::-1]
 
-    credit_nn = CreditClassifierNN(input_size=len(X_train_t[0]), dropout_rate=DROPOUT_RATE)
+    # correct = 0
+    # print("\nTOP FEATURE IMPORTANCES:")
+    # for idx in sorted_idx[:10]:
+    #     print(f"Feature {idx}: importance={importances[idx]:.4f}")
 
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.Adam(credit_nn.parameters(), lr=LEARNING_RATE, weight_decay=L2_CONSTANT)
-    print("X_train_t shape:", X_train_t.shape, "Y_train_t shape:", Y_train_t_indices.shape, "X_val_t shape:", X_val_t.shape, "Y_val_t shape:", Y_val_t_indices.shape)
+    # for i, idx in enumerate(y_val_idx):
+    #     if idx == preds_idx[i]:
+    #         correct += 1
+    # accuracy = correct / len(y_val_idx)
+    # print(f"In the end, Validation Accuracy: {accuracy*100:.2f}%")
 
-    train_losses, val_losses, train_accs, val_accs, iterations, model = train_with_dropout(credit_nn, criterion, optimizer, X_train_t, Y_train_t_indices, X_val_t, Y_val_t_indices, EPOCH_LEN*3, BATCH_SIZE, EPOCH_LEN//10)
 
-
-    # --- Plotting
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-
-    # Plot 1: Loss
-    ax1.plot(iterations, train_losses, label='Minibatch - Train Loss', linestyle=':', color='green', marker='o')
-    ax1.plot(iterations, val_losses, label='Minibatch - Validation Loss', linestyle='-', color='green', marker='x')
-    ax1.set_title('Minibatch FeedForward NN Training Loss with Dropout')
-    ax1.set_xlabel('Iterations')
-    ax1.set_ylabel('Loss (CrossEntropyLoss)')
-    ax1.legend()
-    ax1.grid(True)
-
-    # Plot 2: Accuracy
-    ax2.plot(iterations, train_accs, label='Minibatch - Train Accuracy', linestyle=':', color='blue', marker='o')
-    ax2.plot(iterations, val_accs, label='Minibatch - Validation Accuracy', linestyle='-', color='blue', marker='x')
-    ax2.set_title('Minibatch FeedForward NN Training Accuracy with Dropout')
-    ax2.set_xlabel('Iterations')
-    ax2.set_ylabel('Accuracy')
-    ax2.legend()
-    ax2.grid(True)
-
-    plt.tight_layout()
-    plt.show()
