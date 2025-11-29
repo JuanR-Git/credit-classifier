@@ -6,14 +6,15 @@ import re
 import pandas as pd
 import numpy as np
 import os
+import seaborn
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
 
 
 TRAIN_DATA = 'train.csv'
 LEARNING_RATE = 2e-5
-BATCH_SIZE = 256
-L1_CONSTANT = 2e-4
+BATCH_SIZE = 128
+L2_CONSTANT = 5e-5
 COLUMNS = {
     "Age": {
         "type": "int",
@@ -198,8 +199,6 @@ COLUMNS = {
         "notes": "Indicates categorization of credit score."
     }
 }
-
-NUMBER_OF_TOTAL_COLUMNS = len(COLUMNS.keys()) - 3
 
 def dataCreation(filePath: str) -> pd.DataFrame:
     """
@@ -442,8 +441,11 @@ def normalizeDataWithMinMax(X: torch.Tensor, X_min: torch.Tensor, X_max: torch.T
     return X_scaled
 
 FIRST_LAYER_NEURONS = 256
-SECOND_LAYER_NEURONS = 64
-THIRD_LAYER_NEURONS = 16
+SECOND_LAYER_NEURONS = 128
+THIRD_LAYER_NEURONS = 64
+FOURTH_LAYER_NEURONS = 32
+FIFTH_LAYER_NEURONS = 16
+SIXTH_LAYER_NEURONS = 8
 OUTPUT_LAYER_NEURONS = 3
 
 class CreditClassifierNN(nn.Module):
@@ -466,20 +468,25 @@ class CreditClassifierNN(nn.Module):
         # Define fully connected layers with decreasing dimensions
         self.fc1 = nn.Linear(input_size, FIRST_LAYER_NEURONS)
         self.fc2 = nn.Linear(FIRST_LAYER_NEURONS, SECOND_LAYER_NEURONS)
-        self.fc3 = nn.Linear(SECOND_LAYER_NEURONS, SECOND_LAYER_NEURONS)
-        self.fc4 = nn.Linear(SECOND_LAYER_NEURONS, THIRD_LAYER_NEURONS)
-        self.fc5 = nn.Linear(THIRD_LAYER_NEURONS, OUTPUT_LAYER_NEURONS)
+        self.fc3 = nn.Linear(SECOND_LAYER_NEURONS, THIRD_LAYER_NEURONS)
+        self.fc4 = nn.Linear(THIRD_LAYER_NEURONS, FOURTH_LAYER_NEURONS)
+        self.fc5 = nn.Linear(FOURTH_LAYER_NEURONS, FIFTH_LAYER_NEURONS)
+        self.fc6 = nn.Linear(FIFTH_LAYER_NEURONS, SIXTH_LAYER_NEURONS)
+        self.fc7 = nn.Linear(SIXTH_LAYER_NEURONS, OUTPUT_LAYER_NEURONS)
         
         # Batch normalization layers for training stability
         self.batchNorm1 = nn.BatchNorm1d(FIRST_LAYER_NEURONS)
         self.batchNorm2 = nn.BatchNorm1d(SECOND_LAYER_NEURONS)
         self.batchNorm3 = nn.BatchNorm1d(THIRD_LAYER_NEURONS)
+        self.batchNorm4 = nn.BatchNorm1d(FOURTH_LAYER_NEURONS)
+        self.batchNorm5 = nn.BatchNorm1d(FIFTH_LAYER_NEURONS)
+        self.batchNorm6 = nn.BatchNorm1d(SIXTH_LAYER_NEURONS)
 
         # Activation function
         self.relu = nn.ReLU()
         
         # Dropout layers for regularization
-        self.dropout1 = nn.Dropout(0.35)  # Higher dropout after first layer
+        self.dropout1 = nn.Dropout(0.4)  # Higher dropout after first layer
         self.dropout2 = nn.Dropout(0.1)   # Lower dropout in deeper layers
         
     def forward(self, x):
@@ -492,28 +499,31 @@ class CreditClassifierNN(nn.Module):
         Returns:
             torch.Tensor: Raw logits of shape (batch_size, num_classes)
         """
-        # First block: FC -> ReLU -> BatchNorm -> Dropout
-        x = self.relu(self.fc1(x))
-        x = self.batchNorm1(x)
+        # First block: FC -> BatchNorm -> ReLU -> Dropout
+        x = self.relu(self.batchNorm1(self.fc1(x)))
         x = self.dropout1(x)
         
-        # Second block: FC -> ReLU -> BatchNorm
-        x = self.relu(self.fc2(x))
-        x = self.batchNorm2(x)
+        # Second block: FC -> BatchNorm -> ReLU
+        x = self.relu(self.batchNorm2(self.fc2(x)))
         x = self.dropout1(x)
         
-        # Third block: FC -> ReLU -> BatchNorm -> Dropout
-        x = self.relu(self.fc3(x))
-        x = self.batchNorm2(x)
-        x = self.dropout2(x)
+        # Third block: FC -> BatchNorm -> ReLU ->  Dropout
+        x = self.relu(self.batchNorm3(self.fc3(x)))
+        x = self.dropout1(x)
         
-        # Fourth block: FC -> ReLU -> BatchNorm -> Dropout
-        x = self.relu(self.fc4(x))
-        x = self.batchNorm3(x)
+        # Fourth block: FC -> BatchNorm -> ReLU -> Dropout
+        x = self.relu(self.batchNorm4(self.fc4(x)))
         x = self.dropout2(x)
-        
+
+        # Fifth block: FC -> BatchNorm -> ReLU -> Dropout
+        x = self.relu(self.batchNorm5(self.fc5(x)))
+        x = self.dropout2(x)
+
+        # Fifth block: FC -> BatchNorm -> ReLU -> Dropout
+        x = self.relu(self.batchNorm6(self.fc6(x)))
+        x = self.dropout2(x)
         # Output layer (no activation, raw logits for CrossEntropyLoss)
-        return self.fc5(x)
+        return self.fc7(x)
 
 
 def calculate_full_loss(model, criterion, X, Y):
@@ -624,12 +634,8 @@ def train_credit_classifier(model, criterion, optimizer, X_train, Y_train, X_val
             optimizer.zero_grad()  # Clear gradients from previous step
             outputs = model(batch_X)  # Forward pass
             
-            # Calculate L1 regularization on all layer weights
-            l1_norm = 0
-            for param in model.parameters():
-                l1_norm += torch.sum(torch.abs(param))
-            # Total loss = cross entropy + L1 penalty
-            loss = criterion(outputs, batch_Y) + l1_norm * L1_CONSTANT
+            # Total loss = cross entropy
+            loss = criterion(outputs, batch_Y)
             
             loss.backward()  # Backward pass
             optimizer.step()  # Update weights
@@ -643,7 +649,7 @@ def train_credit_classifier(model, criterion, optimizer, X_train, Y_train, X_val
                 val_acc = calculate_accuracy(model, X_val, Y_val)
                 
                 # Early stopping: check for minimal improvement in validation accuracy
-                if len(val_losses) > 0 and abs(val_loss - val_losses[-1]) < 5e-4:
+                if len(val_losses) > 0 and abs(val_loss - val_losses[-1]) < 1e-3:
                     print("Early stopping due to minimal validation accuracy improvement.")
                     return train_losses, val_losses, train_accs, val_accs, epochs, model
                 
@@ -729,8 +735,8 @@ if __name__ == "__main__":
     df = dataCreation(TRAIN_DATA)
     XFiltered_unorm, YFiltered_unorm = filterData(df)
 
-    # Split into training (95%) and validation (5%) sets
-    split_index = int(0.95 * len(YFiltered_unorm))
+    # Split into training (90%) and validation (10%) sets
+    split_index = int(0.9 * len(YFiltered_unorm))
     
     # Convert to tensors
     X_train_unorm_t = torch.tensor(XFiltered_unorm[:split_index], dtype=torch.float32)
@@ -776,7 +782,7 @@ if __name__ == "__main__":
 
     # Setup loss function with class weights and optimizer
     criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.Adam(credit_nn.parameters(), lr=LEARNING_RATE)
+    optimizer = torch.optim.Adam(credit_nn.parameters(), lr=LEARNING_RATE, weight_decay=L2_CONSTANT)
     
     print(f"X_train shape: {X_train_t.shape}, Y_train shape: {Y_train_t_indices.shape}")
     print(f"X_val shape: {X_val_t.shape}, Y_val shape: {Y_val_t_indices.shape}")
@@ -791,10 +797,41 @@ if __name__ == "__main__":
         Y_train_t_indices, 
         X_val_t, 
         Y_val_t_indices, 
-        EPOCH_LEN * 5,      # Total iterations (2 epochs)
+        EPOCH_LEN * 20,      # Total iterations (20 epochs)
         BATCH_SIZE,         # Batch size
         EPOCH_LEN // 10,    # Check every 1/10th of an epoch
     )
+
+    # Get predicted classes (argmax across the 3-element vectors)
+    preds = model(X_val_t)
+    pred_classes = torch.argmax(preds, dim=1)
+
+    # Convert to numpy for sklearn
+    pred_classes_np = pred_classes.cpu().numpy()
+    true_classes_np = Y_val_t_indices.cpu().numpy()
+
+    # Create confusion matrix
+    cm = confusion_matrix(true_classes_np, pred_classes_np)
+
+    # Plot confusion matrix
+    plt.figure(figsize=(8, 6))
+    seaborn.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=['Bad', 'Standard', 'Good'],
+                yticklabels=['Bad', 'Standard', 'Good'])
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.title('Confusion Matrix for Neural Network')
+    plt.show()
+
+    # Print the confusion matrix
+    print("Confusion Matrix:")
+    print(cm)
+
+    # Optional: Calculate accuracy per class
+    print("\nPer-class accuracy:")
+    for i, label in enumerate(['Bad', 'Standard', 'Good']):
+        accuracy = cm[i, i] / cm[i].sum() if cm[i].sum() > 0 else 0
+        print(f"{label}: {accuracy:.2%}")
 
     # Visualize training progress
     print("\nGenerating training plots...")

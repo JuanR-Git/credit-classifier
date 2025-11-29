@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import seaborn
 import sys
 import re
 import pandas as pd
@@ -433,37 +434,6 @@ def normalizeData(X: list, Y: list) -> tuple[np.ndarray, list]:
 
     return X_normalized, Y
 
-# def evaluate_classification_metrics(model, X_val, Y_val, batch_size=64):
-#     model.eval()
-#     all_preds = []
-#     all_labels = []
-#     val_dataset = TensorDataset(X_val, Y_val)
-#     dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
-
-#     with torch.no_grad():
-#         for X, Y in dataloader:
-#             logits = model(X)                    # raw scores
-#             preds = logits.argmax(dim=1)         # predicted class index
-#             labels = Y                           # ground truth indices
-
-#             all_preds.append(preds.cpu())
-#             all_labels.append(labels.cpu())
-
-#     all_preds = torch.cat(all_preds).numpy()
-#     all_labels = torch.cat(all_labels).numpy()
-
-#     # Confusion Matrix
-#     cm = confusion_matrix(all_labels, all_preds)
-
-#     # Classification Report
-#     report = classification_report(
-#         all_labels, 
-#         all_preds, 
-#         target_names=["Good", "Standard", "Poor"]
-#     )
-
-#     return cm, report
-
 if __name__ == "__main__":
     # Configure print options for debugging (show full arrays)
     np.set_printoptions(threshold=sys.maxsize)
@@ -484,9 +454,9 @@ if __name__ == "__main__":
     num_good = YFiltered.count([0, 0, 1])
     print("Class distribution - Good:", num_good, "Standard:", num_standard, "Poor:", num_poor)
 
-    # Split data into training (95%) and validation (20%) sets with stratification
+    # Split data into training (90%) and validation (10%) sets with stratification
     X_train, X_val, y_train, y_val = train_test_split(
-        XFiltered, YFiltered, test_size=0.05, stratify=YFiltered, random_state=42
+        XFiltered, YFiltered, test_size=0.1, stratify=YFiltered, random_state=42
     )
 
     # Initialize Random Forest with 5000 trees and balanced class weights
@@ -512,17 +482,29 @@ if __name__ == "__main__":
     print("\nCONFUSION MATRIX:")
     y_val_idx = np.argmax(y_val, axis=1)
     preds_idx = np.argmax(preds, axis=1)
-    print(confusion_matrix(y_val_idx, preds_idx))
 
-    # Display detailed classification metrics (precision, recall, F1-score)
-    print("\nCLASSIFICATION REPORT:")
-    print(
-        classification_report(
-            y_val,
-            preds,
-            target_names=["Good", "Standard", "Poor"]
-        )
-    )
+    # Create confusion matrix
+    cm = confusion_matrix(y_val_idx, preds_idx)
+
+    # Plot confusion matrix
+    plt.figure(figsize=(8, 6))
+    seaborn.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=['Bad', 'Standard', 'Good'],
+                yticklabels=['Bad', 'Standard', 'Good'])
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.title('Confusion Matrix for Random Forest')
+    plt.show()
+
+    # Print the confusion matrix
+    print("Confusion Matrix:")
+    print(cm)
+
+    # Optional: Calculate accuracy per class
+    print("\nPer-class accuracy:")
+    for i, label in enumerate(['Bad', 'Standard', 'Good']):
+        accuracy = cm[i, i] / cm[i].sum() if cm[i].sum() > 0 else 0
+        print(f"{label}: {accuracy:.2%}")
 
     # Extract and display top 10 most important features
     importances = model.feature_importances_
