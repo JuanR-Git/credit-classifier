@@ -12,9 +12,9 @@ from sklearn.metrics import confusion_matrix, classification_report
 
 
 TRAIN_DATA = 'train.csv'
-LEARNING_RATE = 2e-5
+LEARNING_RATE = 1e-5
 BATCH_SIZE = 128
-L2_CONSTANT = 5e-5
+L2_CONSTANT = 2e-5
 COLUMNS = {
     "Age": {
         "type": "int",
@@ -486,7 +486,7 @@ class CreditClassifierNN(nn.Module):
         self.relu = nn.ReLU()
         
         # Dropout layers for regularization
-        self.dropout1 = nn.Dropout(0.4)  # Higher dropout after first layer
+        self.dropout1 = nn.Dropout(0.35)  # Higher dropout after first layer
         self.dropout2 = nn.Dropout(0.1)   # Lower dropout in deeper layers
         
     def forward(self, x):
@@ -614,6 +614,7 @@ def train_credit_classifier(model, criterion, optimizer, X_train, Y_train, X_val
     epochs = []
     
     iteration = 0
+    patience = 5
 
     print(f"Training for {num_iterations} iterations with batch size {batch_size} "
           f"(check every {check_every})")
@@ -649,9 +650,14 @@ def train_credit_classifier(model, criterion, optimizer, X_train, Y_train, X_val
                 val_acc = calculate_accuracy(model, X_val, Y_val)
                 
                 # Early stopping: check for minimal improvement in validation accuracy
-                if len(val_losses) > 0 and abs(val_loss - val_losses[-1]) < 1e-3:
-                    print("Early stopping due to minimal validation accuracy improvement.")
-                    return train_losses, val_losses, train_accs, val_accs, epochs, model
+                if len(val_accs) > 0 and (val_acc - val_accs[-1]) < 1e-4:
+                    if patience <= 0:
+                        print("Early stopping due to minimal validation accuracy improvement.")
+                        return train_losses, val_losses, train_accs, val_accs, epochs, model
+                    else:
+                        patience = patience - 1
+                else:
+                    patience = 5
                 
                 # Record metrics
                 train_losses.append(train_loss)
@@ -725,107 +731,120 @@ def evaluate_classification_metrics(model, X_val, Y_val, batch_size=64):
     return cm, report
 
 
+from sklearn.model_selection import KFold
+
 if __name__ == "__main__":
-    # Configure print options for debugging
     np.set_printoptions(threshold=sys.maxsize)
     torch.set_printoptions(edgeitems=7)
-    
-    # Load and preprocess data
+
     print("Loading and filtering training data...")
     df = dataCreation(TRAIN_DATA)
     XFiltered_unorm, YFiltered_unorm = filterData(df)
 
-    # Split into training (90%) and validation (10%) sets
-    split_index = int(0.9 * len(YFiltered_unorm))
-    
-    # Convert to tensors
-    X_train_unorm_t = torch.tensor(XFiltered_unorm[:split_index], dtype=torch.float32)
-    Y_train_t = torch.tensor(YFiltered_unorm[:split_index], dtype=torch.float32)
-    X_val_unorm_t = torch.tensor(XFiltered_unorm[split_index:], dtype=torch.float32)
-    Y_val_t = torch.tensor(YFiltered_unorm[split_index:], dtype=torch.float32)
+    X_arr = np.array(XFiltered_unorm, dtype=np.float32)
+    Y_arr = np.array(YFiltered_unorm, dtype=np.float32)
 
-    # Normalize features using training set statistics
-    X_train_t, train_min, train_max = normalizeDataTrain(X_train_unorm_t)
-    X_val_t = normalizeDataWithMinMax(X_val_unorm_t, train_min, train_max)
+    # Convert labels to class indices
+    Y_indices = np.argmax(Y_arr, axis=1)
 
-    # Display sample data point for verification
-    print("Sample data point (index 25):")
-    print("  Features:", XFiltered_unorm[25])
-    print("  Label:", YFiltered_unorm[25])
-    
-    # Analyze class distribution for weighting
+    # Compute class weights once
     num_good = YFiltered_unorm.count([1, 0, 0])
     num_standard = YFiltered_unorm.count([0, 1, 0])
     num_poor = YFiltered_unorm.count([0, 0, 1])
-    print(f"Class distribution - Good: {num_good}, Standard: {num_standard}, Poor: {num_poor}")
-
-    # Calculate inverse frequency weights to handle class imbalance
     class_counts = torch.tensor([num_good, num_standard, num_poor], dtype=torch.float32)
-    class_weights = 1.0 / class_counts
-    class_weights = class_weights / class_weights.sum()  # Normalize to sum to 1
+    class_weights = (1.0 / class_counts)
+    class_weights = class_weights / class_weights.sum()
+
+    print(f"Class distribution - Good: {num_good}, Standard: {num_standard}, Poor: {num_poor}")
     print(f"Class weights: {class_weights}")
 
-    # Convert one-hot encoded labels to class indices
-    Y_train_t_indices = torch.argmax(Y_train_t, dim=1)
-    Y_val_t_indices = torch.argmax(Y_val_t, dim=1)
-    
-    # Display dataset shapes
-    print(f"Training data size: {X_train_t.shape}, {Y_train_t.shape}")
-    print(f"Validation data size: {X_val_t.shape}, {Y_val_t.shape}")
+    # Set up K-fold cross validation
+    K = 20
+    kf = KFold(n_splits=K, shuffle=True, random_state=42)
 
-    # Define epoch length for training scheduling
-    EPOCH_LEN = len(X_train_t)
+    fold_results = []
+    train_losses = []
+    val_losses = []
+    train_accs = []
+    val_accs = []
+    fold_histories = []
 
-    # Initialize model
-    print(f"\nInitializing model with {len(X_train_t[0])} input features...")
-    credit_nn = CreditClassifierNN(input_size=len(X_train_t[0]))
+    fold_number = 1
+    print(f"\nStarting {K}-fold cross-validation...\n")
 
-    # Setup loss function with class weights and optimizer
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.Adam(credit_nn.parameters(), lr=LEARNING_RATE, weight_decay=L2_CONSTANT)
-    
-    print(f"X_train shape: {X_train_t.shape}, Y_train shape: {Y_train_t_indices.shape}")
-    print(f"X_val shape: {X_val_t.shape}, Y_val shape: {Y_val_t_indices.shape}")
+    for train_index, val_index in kf.split(X_arr):
+        print(f"\n===== Fold {fold_number} / {K} =====")
 
-    # Train the model for 2 epochs
-    print("\nStarting training...")
-    train_losses, val_losses, train_accs, val_accs, epochs, model = train_credit_classifier(
-        credit_nn, 
-        criterion, 
-        optimizer, 
-        X_train_t, 
-        Y_train_t_indices, 
-        X_val_t, 
-        Y_val_t_indices, 
-        EPOCH_LEN * 20,      # Total iterations (20 epochs)
-        BATCH_SIZE,         # Batch size
-        EPOCH_LEN // 10,    # Check every 1/10th of an epoch
-    )
+        # Split
+        X_train_unorm = torch.tensor(X_arr[train_index], dtype=torch.float32)
+        Y_train = torch.tensor(Y_indices[train_index], dtype=torch.long)
 
-    # Get predicted classes (argmax across the 3-element vectors)
-    preds = model(X_val_t)
-    pred_classes = torch.argmax(preds, dim=1)
+        X_val_unorm = torch.tensor(X_arr[val_index], dtype=torch.float32)
+        Y_val = torch.tensor(Y_indices[val_index], dtype=torch.long)
 
-    # Convert to numpy for sklearn
-    pred_classes_np = pred_classes.cpu().numpy()
-    true_classes_np = Y_val_t_indices.cpu().numpy()
+        # Normalize using training fold statistics
+        X_train_norm, train_min, train_max = normalizeDataTrain(X_train_unorm)
+        X_val_norm = normalizeDataWithMinMax(X_val_unorm, train_min, train_max)
 
-    # Create confusion matrix
-    cm = confusion_matrix(true_classes_np, pred_classes_np)
+        # Init model, loss, optimizer
+        credit_nn = CreditClassifierNN(input_size=X_train_norm.shape[1])
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
+        optimizer = torch.optim.Adam(
+            credit_nn.parameters(),
+            lr=LEARNING_RATE,
+            weight_decay=L2_CONSTANT
+        )
 
-    # Plot confusion matrix
-    plt.figure(figsize=(8, 6))
-    seaborn.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                xticklabels=['Bad', 'Standard', 'Good'],
-                yticklabels=['Bad', 'Standard', 'Good'])
-    plt.ylabel('True Label')
-    plt.xlabel('Predicted Label')
-    plt.title('Confusion Matrix for Neural Network')
-    plt.show()
+        # Train
+        EPOCH_LEN = len(X_train_norm)
+        train_losses_one_fold, val_losses_one_fold, train_accs_one_fold, val_accs_one_fold, epochs, model = train_credit_classifier(
+            credit_nn,
+            criterion,
+            optimizer,
+            X_train_norm,
+            Y_train,
+            X_val_norm,
+            Y_val,
+            EPOCH_LEN * 50,
+            BATCH_SIZE,
+            EPOCH_LEN // 10,
+        )
 
-    # Print the confusion matrix
-    print("Confusion Matrix:")
-    print(cm)
+        # Predictions
+        preds = model(X_val_norm)
+        pred_classes = torch.argmax(preds, dim=1)
+
+        cm = confusion_matrix(Y_val.numpy(), pred_classes.numpy())
+        fold_accuracy = (cm[0,0] + cm[1,1] + cm[2,2]) / cm.sum()
+        print(f"Fold {fold_number} accuracy: {fold_accuracy:.4f}")
+
+        fold_results.append({
+            "fold": fold_number,
+            "confusion_matrix": cm,
+            "accuracy": fold_accuracy
+        })
+
+        fold_histories.append({
+            "fold": fold_number,
+            "train_losses": train_losses,
+            "val_losses": val_losses,
+            "train_accs": train_accs,
+            "val_accs": val_accs,
+            "epochs": epochs
+        })
+
+        fold_number += 1
+        
+
+    # Summary of all folds
+    print("\n===== Cross-validation Summary =====")
+    for res in fold_results:
+        print(f"Fold {res['fold']}: accuracy = {res['accuracy']:.4f}")
+
+    avg_acc = np.mean([r["accuracy"] for r in fold_results])
+    print(f"\nAverage accuracy across {K} folds: {avg_acc:.4f}\n")
+
+    print("Cross-validation complete.")
 
     # Optional: Calculate accuracy per class
     print("\nPer-class accuracy:")
@@ -837,23 +856,27 @@ if __name__ == "__main__":
     print("\nGenerating training plots...")
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
-    # Plot 1: Loss over epochs
-    ax1.plot(epochs, train_losses, label='Train Loss', 
-             linestyle=':', color='green', marker='o')
-    ax1.plot(epochs, val_losses, label='Validation Loss', 
-             linestyle='-', color='green', marker='x')
-    ax1.set_title('Minibatch FeedForward NN Training Loss with Dropout')
+    # -------------------------
+    # Left Plot: Loss
+    # -------------------------
+    for hist in fold_histories:
+        ax1.plot(hist["epochs"], hist["train_losses"], linestyle=':', marker='o', label=f'Fold {hist["fold"]} Train')
+        ax1.plot(hist["epochs"], hist["val_losses"], linestyle='-', marker='x', label=f'Fold {hist["fold"]} Val')
+
+    ax1.set_title('Training and Validation Loss Across Folds')
     ax1.set_xlabel('Iterations')
-    ax1.set_ylabel('Loss (CrossEntropyLoss)')
+    ax1.set_ylabel('Loss')
     ax1.legend()
     ax1.grid(True)
 
-    # Plot 2: Accuracy over epochs
-    ax2.plot(epochs, train_accs, label='Train Accuracy', 
-             linestyle=':', color='blue', marker='o')
-    ax2.plot(epochs, val_accs, label='Validation Accuracy', 
-             linestyle='-', color='blue', marker='x')
-    ax2.set_title('Minibatch FeedForward NN Training Accuracy with Dropout')
+    # -------------------------
+    # Right Plot: Accuracy
+    # -------------------------
+    for hist in fold_histories:
+        ax2.plot(hist["epochs"], hist["train_accs"], linestyle=':', marker='o', label=f'Fold {hist["fold"]} Train Acc')
+        ax2.plot(hist["epochs"], hist["val_accs"], linestyle='-', marker='x', label=f'Fold {hist["fold"]} Val Acc')
+
+    ax2.set_title('Training and Validation Accuracy Across Folds')
     ax2.set_xlabel('Iterations')
     ax2.set_ylabel('Accuracy')
     ax2.legend()
@@ -863,3 +886,5 @@ if __name__ == "__main__":
     plt.show()
     
     print("\nTraining complete!")
+    avg_acc = np.mean([r["accuracy"] for r in fold_results])
+    print("\nFinal Accuracy: ", avg_acc)
