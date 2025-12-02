@@ -8,12 +8,10 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV, KFold
 from sklearn.ensemble import RandomForestClassifier
 
 TRAIN_DATA = 'train.csv'
-NUMBER_OF_DATAPOINTS = 1000
-NUMBER_OF_TOTAL_COLUMNS = 21
 COLUMNS = {
     "Age": {
         "type": "int",
@@ -397,42 +395,65 @@ def validateColumnValue(col_name: str, value):
     return False
 
 
-def normalizeData(X: list, Y: list) -> tuple[np.ndarray, list]:
+def normalizeDataTrain(X: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Normalize feature data using Min-Max scaling.
+    Apply min-max normalization to training data and store scaling parameters.
     
-    Applies Min-Max normalization to scale all features to the range [0, 1].
-    This ensures all features contribute equally to the model regardless of
-    their original scales.
+    Normalizes features to [0, 1] range using per-feature min and max values.
+    These parameters should be saved and reused for normalizing validation/test data.
     
     Args:
-        X: List of feature vectors (each vector is a list of numeric values)
-        Y: List of target vectors (passed through unchanged)
+        X: Training tensor of shape (n_samples, n_features)
         
     Returns:
-        tuple: (X_normalized, Y) where:
-            - X_normalized: numpy array of normalized features in range [0, 1]
-            - Y: Original target vectors (unchanged)
+        tuple: (X_scaled, X_min, X_max) where:
+            - X_scaled: Normalized tensor with values in [0, 1]
+            - X_min: Per-feature minimum values (for later use)
+            - X_max: Per-feature maximum values (for later use)
             
     Note:
-        Adds small constant (1e-9) to denominator to prevent division by zero
-        for features with no variance
-        
-    Formula:
-        X_normalized = (X - X_min) / (X_max - X_min)
+        Features with zero range are assigned denominator of 1e-9 to avoid division by zero
     """
-    # Convert feature list to numpy array for vectorized operations
-    X_array = np.array(X, dtype=np.float32)
-
-    # Compute per-feature min and max values
-    X_min = X_array.min(axis=0)
-    X_max = X_array.max(axis=0)
+    # Compute per-feature min and max
+    X_min = X.min(dim=0)[0]
+    X_max = X.max(dim=0)[0]
     
-    # Apply Min-Max scaling with division-by-zero protection
-    # Small constant (1e-9) prevents division by zero for constant features
-    X_normalized = (X_array - X_min) / (X_max - X_min + 1e-9)
+    # Compute denominator with zero-range protection
+    denom = X_max - X_min
+    denom[denom == 0] = 1e-9
+    
+    # Apply min-max scaling
+    X_scaled = (X - X_min) / denom
+    
+    return X_scaled, X_min, X_max
 
-    return X_normalized, Y
+
+def normalizeDataWithMinMax(X: torch.Tensor, X_min: torch.Tensor, X_max: torch.Tensor) -> torch.Tensor:
+    """
+    Normalize data using pre-computed min and max values from training set.
+    
+    Apply the same min-max scaling transformation used on training data to
+    validation or test data. This ensures consistent feature scaling across datasets.
+    
+    Args:
+        X: Tensor to normalize of shape (n_samples, n_features)
+        X_min: Per-feature minimum values from training data
+        X_max: Per-feature maximum values from training data
+        
+    Returns:
+        torch.Tensor: Normalized tensor with same shape as input
+        
+    Note:
+        Features with zero range in training data are assigned denominator of 1e-9
+    """
+    # Compute denominator with zero-range protection
+    denom = X_max - X_min
+    denom[denom == 0] = 1e-9
+    
+    # Apply min-max scaling using training parameters
+    X_scaled = (X - X_min) / denom
+    
+    return X_scaled
 
 if __name__ == "__main__":
     # Configure print options for debugging (show full arrays)
@@ -444,53 +465,86 @@ if __name__ == "__main__":
     
     # Validate and transform data according to column-specific rules
     XFiltered_unorm, YFiltered_unorm = filterData(df)
-    
-    # Apply Min-Max normalization to features (scales to [0, 1] range)
-    XFiltered, YFiltered = normalizeData(XFiltered_unorm, YFiltered_unorm)
+    X_arr = np.array(XFiltered_unorm, dtype=np.float32)
+    Y_arr = np.array(YFiltered_unorm, dtype=np.float32)
 
     # Count samples in each credit rating class (one-hot encoded: [1,0,0]=Good, [0,1,0]=Standard, [0,0,1]=Poor)
-    num_poor = YFiltered.count([1, 0, 0])
-    num_standard = YFiltered.count([0, 1, 0])
-    num_good = YFiltered.count([0, 0, 1])
+    num_poor = YFiltered_unorm.count([1, 0, 0])
+    num_standard = YFiltered_unorm.count([0, 1, 0])
+    num_good = YFiltered_unorm.count([0, 0, 1])
     print("Class distribution - Good:", num_good, "Standard:", num_standard, "Poor:", num_poor)
 
-    # Split data into training (90%) and validation (10%) sets with stratification
-    X_train, X_val, y_train, y_val = train_test_split(
-        XFiltered, YFiltered, test_size=0.1, stratify=YFiltered, random_state=42
-    )
+    Y_indices = np.argmax(Y_arr, axis=1)
 
-    # Initialize Random Forest with 5000 trees and balanced class weights
-    model = RandomForestClassifier(
-        bootstrap=True,
-        max_depth=None,
-        min_samples_leaf=1,
-        min_samples_split=2,
-        n_estimators=5000,
-        class_weight="balanced",  # Handles class imbalance automatically
-        n_jobs=-1,                # Use all CPU cores for parallel training
-        random_state=42
-    )
+    # # Split data into training (90%) and validation (10%) sets with stratification
+    # X_train, X_val, y_train, y_val = train_test_split(
+    #     XFiltered, YFiltered, test_size=0.1, stratify=YFiltered, random_state=42
+    # )
 
+
+
+    K = 10
+    kf = KFold(n_splits=K, shuffle=True, random_state=42)
+
+    fold_results = []
+
+    fold_number = 1
+    print(f"\nStarting {K}-fold cross-validation...\n")
     # Train the Random Forest model on training data
-    print("Training Random Forest...")
-    model.fit(X_train, y_train)
+    for train_index, val_index in kf.split(X_arr):
+        print(f"\n===== Fold {fold_number} / {K} =====")
     
-    # Generate predictions on validation set
-    preds = model.predict(X_val)
-    
-    # Convert one-hot encoded labels to class indices for evaluation
-    print("\nCONFUSION MATRIX:")
-    y_val_idx = np.argmax(y_val, axis=1)
-    preds_idx = np.argmax(preds, axis=1)
+        # Initialize Random Forest with 5000 trees and balanced class weights
+        model = RandomForestClassifier(
+            bootstrap=True,
+            max_depth=None,
+            min_samples_leaf=1,
+            min_samples_split=2,
+            n_estimators=5000,
+            class_weight="balanced",  # Handles class imbalance automatically
+            n_jobs=-1,                # Use all CPU cores for parallel training
+            random_state=42
+        )
 
-    # Create confusion matrix
-    cm = confusion_matrix(y_val_idx, preds_idx)
+        # Split
+        X_train_unorm = torch.tensor(X_arr[train_index], dtype=torch.float32)
+        Y_train = torch.tensor(Y_indices[train_index], dtype=torch.long)
+
+        X_val_unorm = torch.tensor(X_arr[val_index], dtype=torch.float32)
+        Y_val = torch.tensor(Y_indices[val_index], dtype=torch.long)
+        # Normalize using training fold statistics
+        X_train_norm, train_min, train_max = normalizeDataTrain(X_train_unorm)
+        X_val_norm = normalizeDataWithMinMax(X_val_unorm, train_min, train_max)
+
+        model.fit(X_train_norm, Y_train)
+        
+        # Generate predictions on validation set
+        preds = model.predict(X_val_norm)
+        
+        # Convert one-hot encoded labels to class indices for evaluation
+        y_val_idx = np.array(Y_val.numpy())
+        preds_idx = np.array(preds)
+
+        cm = confusion_matrix(Y_val.numpy(), preds_idx)
+        fold_accuracy = (cm[0,0] + cm[1,1] + cm[2,2]) / cm.sum()
+        print(f"Fold {fold_number} accuracy: {fold_accuracy:.4f}")
+        print(f"Confusion matrix: \n{cm}")
+
+        fold_results.append({
+            "fold": fold_number,
+            "confusion_matrix": cm,
+            "accuracy": fold_accuracy
+        })
+        
+        fold_number += 1
+
 
     # Plot confusion matrix
+    total_cm = sum(res["confusion_matrix"] for res in fold_results)
     plt.figure(figsize=(8, 6))
-    seaborn.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                xticklabels=['Bad', 'Standard', 'Good'],
-                yticklabels=['Bad', 'Standard', 'Good'])
+    seaborn.heatmap(total_cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=['Poor', 'Standard', 'Good'],
+                yticklabels=['Poor', 'Standard', 'Good'])
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
     plt.title('Confusion Matrix for Random Forest')
@@ -502,7 +556,7 @@ if __name__ == "__main__":
 
     # Optional: Calculate accuracy per class
     print("\nPer-class accuracy:")
-    for i, label in enumerate(['Bad', 'Standard', 'Good']):
+    for i, label in enumerate(['Poor', 'Standard', 'Good']):
         accuracy = cm[i, i] / cm[i].sum() if cm[i].sum() > 0 else 0
         print(f"{label}: {accuracy:.2%}")
 
@@ -515,8 +569,4 @@ if __name__ == "__main__":
         print(f"Feature {idx}: importance={importances[idx]:.4f}")
 
     # Calculate and display final validation accuracy
-    correct = 0
-    for i, idx in enumerate(y_val_idx):
-        if idx == preds_idx[i]:
-            correct += 1
-    print(f"\nFinal Accuracy: {correct/len(y_val_idx)*100:.2f}%")
+    print(f"\nFinal Accuracy: {sum(res["accuracy"] for res in fold_results)*100:.2f}%")

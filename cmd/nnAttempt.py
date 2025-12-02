@@ -9,6 +9,7 @@ import os
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.model_selection import KFold
 
 
 TRAIN_DATA = 'train.csv'
@@ -608,7 +609,7 @@ def train_credit_classifier(model, criterion, optimizer, X_train, Y_train, X_val
     epochs = []
     
     iteration = 0
-    patience = 5
+    patience = 3
 
     print(f"Training for {num_iterations} iterations with batch size {batch_size} "
           f"(check every {check_every})")
@@ -722,8 +723,6 @@ def evaluate_classification_metrics(model, X_val, Y_val, batch_size=64):
 
     return cm, report
 
-
-from sklearn.model_selection import KFold
 
 if __name__ == "__main__":
     np.set_printoptions(threshold=sys.maxsize)
@@ -847,12 +846,12 @@ if __name__ == "__main__":
     # Visualize training progress
     print("\nGenerating training plots...")
 
-    avg_cm = sum(res["confusion_matrix"] for res in fold_results) / K
+    total_cm = sum(res["confusion_matrix"] for res in fold_results)
     plt.figure(figsize=(6,5))
     sns.heatmap(
-        avg_cm,
+        total_cm,
         annot=True,
-        fmt=".1f",
+        fmt="d",
         cmap="Purples",
         xticklabels=['Poor', 'Standard', 'Good'],
         yticklabels=['Poor', 'Standard', 'Good']
