@@ -6,15 +6,15 @@ import re
 import pandas as pd
 import numpy as np
 import os
-import seaborn
+import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
 
 
 TRAIN_DATA = 'train.csv'
 LEARNING_RATE = 1e-5
-BATCH_SIZE = 128
-L2_CONSTANT = 2e-5
+BATCH_SIZE = 256
+L2_CONSTANT = 3e-5
 COLUMNS = {
     "Age": {
         "type": "int",
@@ -440,12 +440,11 @@ def normalizeDataWithMinMax(X: torch.Tensor, X_min: torch.Tensor, X_max: torch.T
     
     return X_scaled
 
-FIRST_LAYER_NEURONS = 256
-SECOND_LAYER_NEURONS = 128
-THIRD_LAYER_NEURONS = 64
-FOURTH_LAYER_NEURONS = 32
-FIFTH_LAYER_NEURONS = 16
-SIXTH_LAYER_NEURONS = 8
+FIRST_LAYER_NEURONS = 1024
+SECOND_LAYER_NEURONS = 1024
+THIRD_LAYER_NEURONS = 512
+FOURTH_LAYER_NEURONS = 512
+FIFTH_LAYER_NEURONS = 64
 OUTPUT_LAYER_NEURONS = 3
 
 class CreditClassifierNN(nn.Module):
@@ -471,8 +470,7 @@ class CreditClassifierNN(nn.Module):
         self.fc3 = nn.Linear(SECOND_LAYER_NEURONS, THIRD_LAYER_NEURONS)
         self.fc4 = nn.Linear(THIRD_LAYER_NEURONS, FOURTH_LAYER_NEURONS)
         self.fc5 = nn.Linear(FOURTH_LAYER_NEURONS, FIFTH_LAYER_NEURONS)
-        self.fc6 = nn.Linear(FIFTH_LAYER_NEURONS, SIXTH_LAYER_NEURONS)
-        self.fc7 = nn.Linear(SIXTH_LAYER_NEURONS, OUTPUT_LAYER_NEURONS)
+        self.fc6 = nn.Linear(FIFTH_LAYER_NEURONS, OUTPUT_LAYER_NEURONS)
         
         # Batch normalization layers for training stability
         self.batchNorm1 = nn.BatchNorm1d(FIRST_LAYER_NEURONS)
@@ -480,7 +478,6 @@ class CreditClassifierNN(nn.Module):
         self.batchNorm3 = nn.BatchNorm1d(THIRD_LAYER_NEURONS)
         self.batchNorm4 = nn.BatchNorm1d(FOURTH_LAYER_NEURONS)
         self.batchNorm5 = nn.BatchNorm1d(FIFTH_LAYER_NEURONS)
-        self.batchNorm6 = nn.BatchNorm1d(SIXTH_LAYER_NEURONS)
 
         # Activation function
         self.relu = nn.ReLU()
@@ -519,11 +516,8 @@ class CreditClassifierNN(nn.Module):
         x = self.relu(self.batchNorm5(self.fc5(x)))
         x = self.dropout2(x)
 
-        # Fifth block: FC -> BatchNorm -> ReLU -> Dropout
-        x = self.relu(self.batchNorm6(self.fc6(x)))
-        x = self.dropout2(x)
         # Output layer (no activation, raw logits for CrossEntropyLoss)
-        return self.fc7(x)
+        return self.fc6(x)
 
 
 def calculate_full_loss(model, criterion, X, Y):
@@ -650,14 +644,12 @@ def train_credit_classifier(model, criterion, optimizer, X_train, Y_train, X_val
                 val_acc = calculate_accuracy(model, X_val, Y_val)
                 
                 # Early stopping: check for minimal improvement in validation accuracy
-                if len(val_accs) > 0 and (val_acc - val_accs[-1]) < 1e-4:
+                if len(val_accs) > 0 and ((val_acc - val_accs[-1]) < 1e-3 or (val_loss - val_losses[-1]) > 1e-3):
                     if patience <= 0:
                         print("Early stopping due to minimal validation accuracy improvement.")
                         return train_losses, val_losses, train_accs, val_accs, epochs, model
                     else:
                         patience = patience - 1
-                else:
-                    patience = 5
                 
                 # Record metrics
                 train_losses.append(train_loss)
@@ -759,7 +751,7 @@ if __name__ == "__main__":
     print(f"Class weights: {class_weights}")
 
     # Set up K-fold cross validation
-    K = 20
+    K = 10
     kf = KFold(n_splits=K, shuffle=True, random_state=42)
 
     fold_results = []
@@ -826,10 +818,10 @@ if __name__ == "__main__":
 
         fold_histories.append({
             "fold": fold_number,
-            "train_losses": train_losses,
-            "val_losses": val_losses,
-            "train_accs": train_accs,
-            "val_accs": val_accs,
+            "train_losses": train_losses_one_fold,
+            "val_losses": val_losses_one_fold,
+            "train_accs": train_accs_one_fold,
+            "val_accs": val_accs_one_fold,
             "epochs": epochs
         })
 
@@ -848,12 +840,29 @@ if __name__ == "__main__":
 
     # Optional: Calculate accuracy per class
     print("\nPer-class accuracy:")
-    for i, label in enumerate(['Bad', 'Standard', 'Good']):
+    for i, label in enumerate(['Poor', 'Standard', 'Good']):
         accuracy = cm[i, i] / cm[i].sum() if cm[i].sum() > 0 else 0
         print(f"{label}: {accuracy:.2%}")
 
     # Visualize training progress
     print("\nGenerating training plots...")
+
+    avg_cm = sum(res["confusion_matrix"] for res in fold_results) / K
+    plt.figure(figsize=(6,5))
+    sns.heatmap(
+        avg_cm,
+        annot=True,
+        fmt=".1f",
+        cmap="Purples",
+        xticklabels=['Poor', 'Standard', 'Good'],
+        yticklabels=['Poor', 'Standard', 'Good']
+    )
+    plt.title("Average Confusion Matrix Across Folds")
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
+    plt.tight_layout()
+    plt.show()
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
     # -------------------------
